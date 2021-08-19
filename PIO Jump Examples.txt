@@ -1,0 +1,290 @@
+# PIO Episode 5, Example 1
+# Unconditional Jump Instruction
+# Blinks LED 3 using unconditional jump
+
+from rp2 import PIO, StateMachine, asm_pio
+from machine import Pin
+import time
+
+@asm_pio(set_init=PIO.OUT_LOW)
+def led_blink():
+    label("mainloop")
+    set(pins, 0)    [31]    # Turn LED off
+    nop()           [31]    # Kill time
+    nop()           [31]
+    nop()           [31]  
+    nop()           [31]
+    nop()           [31]  
+    nop()           [31]
+    nop()           [31]  
+    set(pins, 1)    [31]    # Turn LED on
+    nop()           [31]    # Kill time
+    nop()           [31]
+    nop()           [31]  
+    nop()           [31]
+    nop()           [31]  
+    nop()           [31]
+    jmp("mainloop") [31]    # Jump back to the beginning
+
+
+
+sm1 = StateMachine(1, led_blink, freq=2000, set_base=Pin(3))  # Instantiate SM1, 2000 Hz, LED on pin 3
+sm1.active(1)                                                 # Start State Machine 1
+
+*************************************************************************************
+
+# PIO Episode 5 Example 2
+# Jump if x = 0 Instruction
+# Blinks LED 3 using conditional jumps
+
+from rp2 import PIO, StateMachine, asm_pio
+from machine import Pin
+import time
+
+@asm_pio(set_init=PIO.OUT_LOW)
+def led_blink():
+    label("mainloop")
+    set(pins, 0)    [31]     # Turns off LED
+    set(x,0)        [31]     # Sets X flag for conditional jump
+    jmp("delay")    [31]     # Jumps to the delay routine
+    label("return_0")        
+    set(pins, 1)    [31]     # Turns LED off
+    set(x,1)        [31]     # Sets X flag for conditional jump
+    jmp("delay")    [31]     # Jumps to the delay routine
+    label("return_1")
+    jmp("mainloop") [31]     # Jumps to the beginning of the blink routine
+    
+    
+    label("delay")           # Kills time
+    nop()           [31]  
+    nop()           [31]
+    nop()           [31]  
+    nop()           [31]
+    nop()           [31]  
+    nop()           [31]
+    nop()           [31]
+    jmp(not_x, "return_0")   # If x = 0 then return to "return 0"
+    jmp("return_1")          # Otherwise return to "return 1"
+    
+    
+
+
+sm1 = StateMachine(1, led_blink, freq=2000, set_base=Pin(3))  # Instantiate State Machine 1
+sm1.active(1)                                                 # Start State Machine 1
+
+*************************************************************************************
+
+# PIO Episode 5, Example 3
+# Jump if x = 0 Instruction
+# Blinks LED 3 using conditional jump and decrement
+
+from rp2 import PIO, StateMachine, asm_pio
+from machine import Pin
+import time
+
+@asm_pio(set_init=PIO.OUT_LOW)
+def led_blink():
+    label("mainloop")
+    set(pins, 0)    [31]     # Turns off LED
+    set(x,0)        [31]     # Sets X flag for conditional jump
+    jmp("delay")    [31]     # Jumps to the delay routine
+    label("return_0")        
+    set(pins, 1)    [31]     # Turns LED off
+    set(x,1)        [31]     # Sets X flag for conditional jump
+    jmp("delay")    [31]     # Jumps to the delay routine
+    label("return_1")
+    jmp("mainloop") [31]     # Jumps to the beginning of the blink routine
+    label("delay")           # Kills time
+    set(y,31)
+    label("sub_delay_loop")
+    jmp(y_dec, "sub_delay_loop")   [31]  # Jumps to "sub_delay_loop" if y not equal 0, 
+                                         # then decrement Y
+    jmp(not_x, "return_0")   # If x = 0 then return to "return 0"
+    jmp("return_1")          # Otherwise return to "return 1"
+    
+    
+
+
+sm1 = StateMachine(1, led_blink, freq=2000, set_base=Pin(3))  # Instantiate State Machine 1
+sm1.active(1)                                                 # Start State Machine 1
+ 
+*************************************************************************************
+
+# PIO Episode 5, Example 4
+# Jump if x = 0 Instruction
+# Blinks LED 3 using a pull instruction
+# to input a user selected delay for a variable
+# frequency
+
+
+from rp2 import PIO, StateMachine, asm_pio
+from machine import Pin
+import time
+
+@asm_pio(set_init=PIO.OUT_LOW)
+def led_blink():
+    label("mainloop")
+    pull(noblock)            # Loads OSR with delay value
+    mov(x,osr)               # OSR contents to X to prepare for future noblock pulls
+    mov(y,x)                 # Load delay value into Y
+    set(pins, 0)    [31]     # Turns off LED
+    label("delay_off")       # Start of off timer
+    jmp(y_dec, "delay_off")   [31]  # Jumps to "delay_off" if y not 0, then decrements Y
+    mov(y,x)                 # Load delay value into Y
+    set(pins, 1)    [31]     # Turns LED on
+    label("delay_on")        # Start of on timer
+    jmp(y_dec, "delay_on")   [31]   # Jumps to "delay_on" if y not 0, then decrements Y
+    jmp("mainloop")          # Jumps to the beginning of the blink routine   
+    
+sm1 = StateMachine(1, led_blink, freq=2000, set_base=Pin(3)) # Instantiates State Machine 1
+sm1.active(1)                                                # Starts State Machine 1
+
+while True:
+      value = int(input("enter delay:"))
+      sm1.put(value)         # Output the next Byte
+      print(value)
+
+
+*************************************************************************************
+
+# PIO Episode 5, Example 5
+# Jump if x = 0 Instruction
+# Blinks LED 3 using a pull instruction
+# to input the x value for x_not_y jump
+
+from rp2 import PIO, StateMachine, asm_pio
+from machine import Pin
+import time
+
+@asm_pio(set_init=PIO.OUT_LOW)
+def led_blink():
+    label("mainloop")
+    pull(noblock)            # Loads OSR with data
+    mov(x,osr)               # puts OSR contents in X
+    set(y,31)                # loads initial value for off delay timer
+    set(pins, 0)    [31]     # Turns off LED
+    label("delay_off")       # Start of off delay timer
+    jmp(y_dec, "delay_off")   [31]  # jumps to "delay_off" if Y is not 0, then decrement Y
+    set(y,31)                # loads inital value for on delay timer
+    jmp(x_not_y, "mainloop") # If Y is not equal to X (which has just been loaded with 31) jump back to "mainloop"
+    set(pins, 1)    [31]     # Turns LED on
+    label("delay_on")        # Start  on delay timer
+    jmp(y_dec, "delay_on")   [31]   # jumps to "delay_on" if y is not 0, then decrement Y
+    jmp("mainloop")          # Jumps to the beginning of the blink routine
+        
+sm1 = StateMachine(1, led_blink, freq=2000, set_base=Pin(3))
+sm1.active(1)
+
+while True:
+      value = int(input("enter number {31 to start}:"))
+      sm1.put(value)         # Output the next Byte
+      print(value)
+
+
+*************************************************************************************
+# PIO Episode 5, Example 7
+# Jump if x = 0 Instruction
+# Blinks LED 3 using jmp(not_osre) to 
+# blink the LED if the OSR is not empty
+
+from rp2 import PIO, StateMachine, asm_pio
+from machine import Pin
+import time
+
+
+@asm_pio(set_init=PIO.OUT_LOW, autopull=True, pull_thresh=16)   # autopull turned on, 16 bits at a time
+
+def led_blink():
+    label("look_for_data")
+    jmp(not_osre, "blinkLED")      # Jumps to "blinkLED" if OSR is not empty
+    jmp("look_for_data")           # loops back to "look_for_data" if OSR was empty
+    label("blinkLED")
+    out(x, 16)                     # Empties the OSR into X
+    set(y,31)                      # sets the delay for the off timer
+    set(pins, 0)    [31]           # Turns off LED
+    label("delay_off")
+    jmp(y_dec, "delay_off")  [31]  # countdown off timer
+    set(y,31)                      # sets the delay for the on timer
+    set(pins, 1)    [31]           # Turns LED on
+    label("delay_on")
+    jmp(y_dec, "delay_on")   [31]  # countdown on timer
+    jmp("look_for_data")           # Jumps to the beginning of the blink routine
+     
+sm1 = StateMachine(1, led_blink, freq=2000, set_base=Pin(3))
+sm1.active(1)
+
+while True:
+      value = int(input("enter any number:"))
+      sm1.put(value)              # Output the next Byte
+      print(value)
+
+*************************************************************************************
+
+# PIO Episode 5, Example 6
+# Jump if x = 0 Instruction
+# Blinks LED 3 using jmp(pin) to 
+# start blinking using pin 16
+
+from rp2 import PIO, StateMachine, asm_pio
+from machine import Pin
+import time
+BLINK_OFF_PIN=Pin(16, Pin.IN, Pin.PULL_DOWN)
+
+@asm_pio(set_init=PIO.OUT_LOW)
+
+def led_blink():
+    label("mainloop")
+    pull(noblock)            # Loads the OSR with data
+    mov(x,osr)               # Moves value from the OSR to X to prep for noblock pull
+    set(y,31)                # Initial delay for off timer
+    set(pins, 0)    [31]     # Turns off LED
+    label("delay_off")       # Start of off delay timer
+    jmp(y_dec, "delay_off")   [31] # jumps to "delay_off" if Y is not 0, then decrement Y
+    set(y,31)                # Initial delay for on timer
+    jmp(pin, "mainloop")     # Jumps to "mainloop" if pin is high (pin 16 defined above)
+    set(pins, 1)    [31]     # Turns LED on
+    label("delay_on")        # Start of on delay timer
+    jmp(y_dec, "delay_on")   [31]  # jumps to "delay_on" if y is not 0, then decrement Y
+    jmp("mainloop")          # Jumps to the beginning of the blink routine
+   
+sm1 = StateMachine(1, led_blink, freq=2000, set_base=Pin(3), jmp_pin=BLINK_OFF_PIN)
+sm1.active(1)
+
+
+*************************************************************************************
+
+# PIO Episode 5, Example 7
+# Jump if x = 0 Instruction
+# Blinks LED 3 using jmp(not_osre) to 
+# blink the LED if the OSR is not empty
+
+from rp2 import PIO, StateMachine, asm_pio
+from machine import Pin
+import time
+
+
+@asm_pio(set_init=PIO.OUT_LOW, autopull=True, pull_thresh=16)   # autopull turned on, 16 bits at a time
+
+def led_blink():
+    label("look_for_data")
+    jmp(not_osre, "blinkLED")      # Jumps to "blinkLED" if OSR is not empty
+    jmp("look_for_data")           # loops back to "look_for_data" if OSR was empty
+    label("blinkLED")
+    out(x, 16)                     # Empties the OSR into X
+    set(y,31)                      # sets the delay for the off timer
+    set(pins, 0)    [31]           # Turns off LED
+    label("delay_off")
+    jmp(y_dec, "delay_off")  [31]  # countdown off timer
+    set(y,31)                      # sets the delay for the on timer
+    set(pins, 1)    [31]           # Turns LED on
+    label("delay_on")
+    jmp(y_dec, "delay_on")   [31]  # countdown on timer
+    jmp("look_for_data")           # Jumps to the beginning of the blink routine
+     
+sm1 = StateMachine(1, led_blink, freq=2000, set_base=Pin(3))
+sm1.active(1)
+
+while True:
+      value = int(input("enter any number:"))
+      sm1.put(value)              # Output the next Byte
+      print(value)
