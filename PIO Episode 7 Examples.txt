@@ -1,0 +1,295 @@
+MicroPython program, Episode 5, Example 1**********************************
+
+# PIO Episode 5, Example 1
+# Unconditional Jump Instruction
+# Blinks LED 3 using unconditional jump
+
+from rp2 import PIO, StateMachine, asm_pio
+from machine import Pin
+import time
+
+@asm_pio(set_init=PIO.OUT_LOW)
+def led_blink():
+    label("mainloop")
+    set(pins, 1)    [31]    # Turn LED on
+    nop()           [31]    # Kill time
+    nop()           [31]
+    nop()           [31]  
+    nop()           [31]
+    nop()           [31]  
+    nop()           [31]
+    nop()           [31]  
+    set(pins, 0)    [31]    # Turn LED off
+    nop()           [31]    # Kill time
+    nop()           [31]
+    nop()           [31]  
+    nop()           [31]
+    nop()           [31]  
+    nop()           [31]
+    jmp("mainloop") [31]    # Jump back to the beginning
+
+
+# Instantiate SM1, 2000 Hz, LED on pin 3
+sm1 = StateMachine(1, led_blink, freq=2000, set_base=Pin(3))  
+# Start State Machine 1
+sm1.active(1)                                                 
+
+
+C/C++ PIO program, Episode 7, Example 1*******************************************
+
+/* PIO Episode 7, Example 1, written for C
+ Blinks LED 3   
+ This is the C/C++ version of the PIO program from Ep 5, Ex 1
+*/
+.program  ep7jump
+
+mainloop:
+    set pins, 1   [31] 		;
+    nop           [31]  	;
+    nop           [31]  	;
+    nop           [31]  	;
+    nop           [31]  	;
+    nop           [31]  	;
+    nop           [31]  	;
+    nop           [31]  	;
+    set pins, 0   [31] 		;
+    nop           [31]  	;
+    nop           [31]  	;
+    nop           [31]  	;
+    nop           [31]  	;
+    nop           [31]  	;
+    nop           [31]  	;
+    jmp mainloop  [31] 		;
+
+% c-sdk {
+#include "hardware/clocks.h"
+static inline void ep7jump_program_init(PIO pio, uint sm, uint offset, uint pin, float freq) {
+    pio_sm_config c = ep7jump_program_get_default_config(offset);
+
+    // Map the state machine's SET pin group to one pin, namely the `pin`
+    // parameter to this function.
+    sm_config_set_set_pins(&c, pin, 1);
+	
+    // Set this pin's GPIO function (connect PIO to the pad)
+    pio_gpio_init(pio, pin);
+	
+    // Set the pin direction to output at the PIO
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+
+	// set the state machine clock rate
+	float div = clock_get_hz(clk_sys) / freq ;  // calculates the clock divider
+	sm_config_set_clkdiv(&c, div);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+	
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
+
+
+C program, Episode 7, Example 1*************************************************
+
+/**
+ *C program for Ep 7, Ex 1, blink LED with unconditional Jump
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+// Our assembled program:
+#include "pio_jump_ex_1.pio.h"
+
+int main() {
+
+    // Choose which PIO instance to use (there are two instances)
+    PIO pio = pio0;
+	// Our assembled program needs to be loaded into this PIO's instruction
+    // memory. This SDK function will find a location (offset) in the
+    // instruction memory where there is enough space for our program. We need
+    // to remember this location!
+    uint offset = pio_add_program(pio, &ep7jump_program);
+
+	// Assign GPIO3 as the blinking LED
+	uint BLINK_LED_PIN = 3;
+	
+	// select the desired state machine clock frequency (2500 is about the lower limit)
+	float SM_CLK_FREQ = 2500;
+
+    // Find a free state machine on our chosen PIO (erroring if there are
+    // none). Configure it to run our program, and start it, using the
+    // helper function we included in our .pio file.
+    uint sm = pio_claim_unused_sm(pio, true);
+	
+    ep7jump_program_init(pio, sm, offset, BLINK_LED_PIN, SM_CLK_FREQ);
+
+}
+
+
+CMakeLists Episode 7, Example 1***************************************************
+
+cmake_minimum_required(VERSION 3.19)
+
+# Pull in SDK (must be before project)
+include(pico_sdk_import.cmake)
+
+
+project(EP7JUMPEX1
+)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+
+
+# Initialize the SDK
+pico_sdk_init()
+
+
+
+add_executable(pio_jump_ex_1_pio)
+
+pico_generate_pio_header(pio_jump_ex_1_pio ${CMAKE_CURRENT_LIST_DIR}/pio_jump_ex_1.pio)
+
+target_sources(pio_jump_ex_1_pio PRIVATE pio_jump_ex_1.c)
+
+target_link_libraries(pio_jump_ex_1_pio PRIVATE
+        pico_stdlib
+        hardware_pio
+        )
+
+pico_add_extra_outputs(pio_jump_ex_1_pio)
+
+
+MicroPython Episode 5, Example 6 ***************************************************
+
+# PIO Episode 5, Example 6
+# 
+# Blinks LED 3 using jmp(pin) to 
+# start blinking using pin 16
+
+from rp2 import PIO, StateMachine, asm_pio
+from machine import Pin
+import time
+BLINK_OFF_PIN=Pin(16, Pin.IN, Pin.PULL_DOWN)
+
+@asm_pio(set_init=PIO.OUT_LOW)
+
+def led_blink():
+    label("mainloop")
+    pull(noblock)            # Loads the OSR with data
+    mov(x,osr)               # Moves value from the OSR to X to prep for noblock pull
+    set(y,31)                # Initial delay for off timer
+    set(pins, 0)    [31]     # Turns off LED
+    label("delay_off")       # Start of off delay timer
+    jmp(y_dec, "delay_off")   [31] # jumps to "delay_off" if Y is not 0, then decrement Y
+    set(y,31)                # Initial delay for on timer
+    jmp(pin, "mainloop")     # Jumps to "mainloop" if pin is high (pin 16 defined above)
+    set(pins, 1)    [31]     # Turns LED on
+    label("delay_on")        # Start of on delay timer
+    jmp(y_dec, "delay_on")   [31]  # jumps to "delay_on" if y is not 0, then decrement Y
+    jmp("mainloop")          # Jumps to the beginning of the blink routine
+   
+sm1 = StateMachine(1, led_blink, freq=2000, set_base=Pin(3), jmp_pin=BLINK_OFF_PIN)
+sm1.active(1)
+
+
+C/C++ PIO Episode 7, Example 2****************************************************
+
+/* PIO Episode 7, Example 2, written for C
+ Jump if x = 0 Instruction
+ Blinks LED 3 using jmp(pin) to 
+ start blinking using pin 16
+*/
+.program	ep7jump
+// This is the C/C++ version of the PIO program from Ep 5, Ex 6
+// The jump pin turns blinking on or off
+
+mainloop:
+	set Y, 31				;   Initial delay for off timer
+	set pins, 0   [31]		;   Turns off LED
+delay_off:					//	Start of off delay timer
+	jmp Y-- delay_off [31]	;	jumps to "delay_off" if Y is not 0, then decrement Y
+	set Y, 31				;	Initial delay for on timer
+	jmp PIN, mainloop		;	Jumps to "mainloop" if pin is high (pin 16 defined above)
+	set pins, 1   [31]		;	Turns LED on
+delay_on:					//	Start of on delay timer
+	jmp Y-- delay_on   [31]	;	jumps to "delay_on" if y is not 0, then decrement Y
+	jmp mainloop			;
+	
+% c-sdk {
+#include "hardware/clocks.h"
+static inline void ep7jump_program_init(PIO pio, uint sm, uint offset, uint pin, uint jpin, float freq) {
+    pio_sm_config c = ep7jump_program_get_default_config(offset);
+
+    // Map the state machine's OUT pin group to one pin, namely the `pin`
+    // parameter to this function.
+    sm_config_set_set_pins(&c, pin, 1);
+	
+    // Set this pin's GPIO function (connect PIO to the pad)
+    pio_gpio_init(pio, pin);
+	
+    // Set the pin direction to output at the PIO
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+	
+	// Set the Jump Pin
+	sm_config_set_jmp_pin(&c, jpin); 
+	
+	// set the state machine clock rate
+	float div = clock_get_hz(clk_sys) / freq ;  // calculates the clock divider
+	sm_config_set_clkdiv(&c, div);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+	
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
+
+
+
+
+C program, Episode 7, Example 2*******************************************************
+
+/**
+ * Episode 7 Example 2
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+// Our assembled program:
+#include "ep7jump.pio.h"
+
+int main() {
+
+    // Choose which PIO instance to use (there are two instances)
+    PIO pio = pio0;
+	// Our assembled program needs to be loaded into this PIO's instruction
+    // memory. This SDK function will find a location (offset) in the
+    // instruction memory where there is enough space for our program. We need
+    // to remember this location!
+    uint offset = pio_add_program(pio, &ep7jump_program);
+	
+	// Assign GPIO3 as the blinking LED
+	uint BLINK_LED_PIN = 3;
+	
+	// Set out jump pin, which controls the blinking to 16
+	uint JUMP_PIN_NUMBER = 16;
+	
+	// select the desired state machine clock frequency 
+	float SM_CLK_FREQ = 3000;
+
+    // Find a free state machine on our chosen PIO (erroring if there are
+    // none). Configure it to run our program, and start it, using the
+    // helper function we included in our .pio file.
+    uint sm = pio_claim_unused_sm(pio, true);
+    ep7jump_program_init(pio, sm, offset, BLINK_LED_PIN, JUMP_PIN_NUMBER, SM_CLK_FREQ);
+
+    // The state machine is now running. 
+    
+}
+
+
