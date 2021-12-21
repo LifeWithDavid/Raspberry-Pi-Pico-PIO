@@ -1,0 +1,285 @@
+Episode 10 PIO Forced & Exec Instructions Example
+
+***********************************************
+PIO Program
+***********************************************
+/* PIO Episode 10, Example 1, written for C
+ This PIO program has 4 entry points: blink led 0 using PIO, 
+ blink led 1 using an alternate entry using PIO,
+ blink led 2 using instructions from tx fifo, 
+ blink an led "0,1,2,3" sequence using PIO plus a modified instruction stored in "X"
+*/
+.program	ep10demo
+
+
+
+led0:
+	set Y, 31					;   Initial delay for off timer
+	set pins, 0   		[31]	;   Turns off LED
+led0_off:						//	Start of off delay timer
+	jmp Y-- led0_off 	[31]	;	jumps to "led0_off" if Y is not 0, then decrement Y
+	set Y, 31					;	Initial delay for on timer
+	set pins, 1   		[31]	;	Turns LED on
+led0_on:						//	start of on delay timer
+	jmp Y-- led0_on   	[31]	;	jumps to "led0_on" if y is not 0, then decrement Y
+	jmp led0					;	back to the turn led 0 off
+	
+led1:
+	set Y, 31					;   Initial delay for off timer
+	set pins, 0   		[31]	;   Turns off LED
+led1_off:						//	Start of off delay timer
+	jmp Y-- led1_off 	[31]	;	jumps to "led1_off" if Y is not 0, then decrement Y
+	set Y, 31					;	Initial delay for on timer
+	set pins, 2   		[31]	;	Turns LED on
+led1_on:						//	start of on delay timer
+	jmp Y-- led1_on   	[31]	;	jumps to "led1_on" if y is not 0, then decrement Y
+	jmp led1					;	back to the turn led 1 off
+
+
+osr_exec_entry:
+	pull						;   pull instruction from TX FIFO into ORS
+	out exec, 32				;	get instruction from osr
+	jmp osr_exec_entry			;	jump back to get next instruction
+
+mov_exec_entry:
+	pull noblock				;	pull instruction from TX FIFO into OSR
+	mov x, osr					;   and put instruction into X scratch register
+	set Y, 31					;   Initial delay for off timer
+	set pins, 0   		[31]	;   Turns off LED
+led_all_off:					//	Start of off delay timer
+	jmp Y-- led_all_off [31]	;	jumps to "led_all_off" if Y is not 0, then decrement Y
+	set Y, 31					;	Initial delay for on timer
+	mov exec, x			[31]	;	use instruction in X to turn selected led on 
+led_all_on:						//	start of on delay timer
+	jmp Y-- led_all_on 	[31]	;	jumps to "led_all_on" if y is not 0, then decrement Y
+	jmp mov_exec_entry			;	back to the turn led_all off
+	
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void ep10demo_program_init(PIO pio, uint sm, uint offset, uint pin, float freq) {
+    pio_sm_config c = ep10demo_program_get_default_config(offset);
+
+    // Map the state machine's OUT pin group to one pin, namely the `pin`
+    // parameter to this function.
+    sm_config_set_set_pins(&c, pin, 4);
+	
+    // Set this pin's GPIO function (connect PIO to the pad)
+    pio_gpio_init(pio, pin);
+	pio_gpio_init(pio, pin+1);
+	pio_gpio_init(pio, pin+2);
+	pio_gpio_init(pio, pin+3);
+	
+    // Set the pin direction to output at the PIO
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 4, true);
+	
+	// set the state machine clock rate
+	float div = clock_get_hz(clk_sys) / freq ;  // calculates the clock divider
+	sm_config_set_clkdiv(&c, div);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+	
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
+
+**************************************************
+C Program
+**************************************************
+
+/**
+ * Episode 10 Example 1
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+// Our assembled program:
+#include "ep10demo.pio.h"
+
+int main() {
+
+    // Choose which PIO instance to use (there are two instances)
+    PIO pio = pio0;
+	// Our assembled program needs to be loaded into this PIO's instruction
+    // memory. This SDK function will find a location (offset) in the
+    // instruction memory where there is enough space for our program. We need
+    // to remember this location!
+    uint offset = pio_add_program(pio, &ep10demo_program);
+	
+	// Assign GPIO3 as the blinking LED
+	uint BLINK_LED_PIN = 0;
+	
+	// Set out jump pin, which controls the blinking to 16
+//	uint JUMP_PIN_NUMBER = 16;
+	
+	// select the desired state machine clock frequency 
+	float SM_CLK_FREQ = 3000;
+
+    // Find a free state machine on our chosen PIO (erroring if there are
+    // none). Configure it to run our program, and start it, using the
+    // helper function we included in our .pio file.
+    uint sm = pio_claim_unused_sm(pio, true);
+	ep10demo_program_init(pio, sm, offset, BLINK_LED_PIN, SM_CLK_FREQ);
+
+    // The state machine is now running. 
+	while(true){
+		
+		//Blink led 0 for 10 seconds	
+		sleep_ms(10000);
+		
+		//Blink led 1 for 10 seconds
+		pio_sm_exec(pio, sm, pio_encode_jmp(7 + offset));
+		sleep_ms(10000);
+		
+		// Blink led 2 using instructions sent to tx fifo
+		pio_sm_exec(pio, sm, pio_encode_jmp(14 + offset));
+		for (int i = 0; i < 14; ++i){
+			pio_sm_put (pio, sm,  pio_encode_set (pio_pins, 0)); //turn off leds
+			sleep_ms(357);
+			pio_sm_put (pio, sm,  pio_encode_set (pio_pins, 4)); //turn on led 2
+			sleep_ms(357);
+		}	
+		// blink led 0 through 4 using mov exec
+		// send instruction to turn on led 3 to TX FIFO
+		pio_sm_put_blocking (pio, sm,  pio_encode_set (pio_pins, 8));
+		pio_sm_exec(pio, sm, pio_encode_jmp(17 + offset)); 	//jump to PIO "mov_exec_entry"
+		for (int j = 0; j < 3; ++j){  					//run through sequence 3 times
+			for (int i = 0; i <= 3; ++i){ 				// generates blinking sequence "0,1,2,3"
+				pio_sm_put_blocking (pio, sm,  pio_encode_set (pio_pins, 1u << i));
+			}
+		}
+		sleep_ms(4200); // a little delay to allow TX FIFO to flush
+		//set up to blink led 0 again
+		pio_sm_exec(pio, sm, pio_encode_jmp(0 + offset));  // jump to beginning of PIO program
+	}
+}
+
+**************************************************
+CMakeLists
+**************************************************
+cmake_minimum_required(VERSION 3.19)
+
+# Pull in SDK (must be before project)
+include(pico_sdk_import.cmake)
+
+
+project(EP10DEMO
+)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+
+set(PICO_EXAMPLES_PATH ${PROJECT_SOURCE_DIR})
+
+# Initialize the SDK
+pico_sdk_init()
+
+
+
+add_executable(ep10demo_pio)
+
+pico_generate_pio_header(ep10demo_pio ${CMAKE_CURRENT_LIST_DIR}/ep10demo.pio)
+
+target_sources(ep10demo_pio PRIVATE ep10demo.c)
+
+target_link_libraries(ep10demo_pio PRIVATE
+        pico_stdlib
+        hardware_pio
+        )
+
+pico_add_extra_outputs(ep10demo_pio)
+
+# add url via pico_set_program_url
+# example_auto_set_url(ep10demo_pio)
+
+*****************************************************
+For Reference Only: PIO header file
+*****************************************************
+// -------------------------------------------------- //
+// This file is autogenerated by pioasm; do not edit! //
+// -------------------------------------------------- //
+
+#pragma once
+
+#if !PICO_NO_HARDWARE
+#include "hardware/pio.h"
+#endif
+
+// -------- //
+// ep10demo //
+// -------- //
+
+#define ep10demo_wrap_target 0
+#define ep10demo_wrap 25
+
+static const uint16_t ep10demo_program_instructions[] = {
+            //     .wrap_target
+    0xe05f, //  0: set    y, 31                      
+    0xff00, //  1: set    pins, 0                [31]
+    0x1f82, //  2: jmp    y--, 2                 [31]
+    0xe05f, //  3: set    y, 31                      
+    0xff01, //  4: set    pins, 1                [31]
+    0x1f85, //  5: jmp    y--, 5                 [31]
+    0x0000, //  6: jmp    0                          
+    0xe05f, //  7: set    y, 31                      
+    0xff00, //  8: set    pins, 0                [31]
+    0x1f89, //  9: jmp    y--, 9                 [31]
+    0xe05f, // 10: set    y, 31                      
+    0xff02, // 11: set    pins, 2                [31]
+    0x1f8c, // 12: jmp    y--, 12                [31]
+    0x0007, // 13: jmp    7                          
+    0x80a0, // 14: pull   block                      
+    0x60e0, // 15: out    exec, 32                   
+    0x000e, // 16: jmp    14                         
+    0x8080, // 17: pull   noblock                    
+    0xa027, // 18: mov    x, osr                     
+    0xe05f, // 19: set    y, 31                      
+    0xff00, // 20: set    pins, 0                [31]
+    0x1f95, // 21: jmp    y--, 21                [31]
+    0xe05f, // 22: set    y, 31                      
+    0xbf81, // 23: mov    exec, x                [31]
+    0x1f98, // 24: jmp    y--, 24                [31]
+    0x0011, // 25: jmp    17                         
+            //     .wrap
+};
+
+#if !PICO_NO_HARDWARE
+static const struct pio_program ep10demo_program = {
+    .instructions = ep10demo_program_instructions,
+    .length = 26,
+    .origin = -1,
+};
+
+static inline pio_sm_config ep10demo_program_get_default_config(uint offset) {
+    pio_sm_config c = pio_get_default_sm_config();
+    sm_config_set_wrap(&c, offset + ep10demo_wrap_target, offset + ep10demo_wrap);
+    return c;
+}
+
+#include "hardware/clocks.h"
+static inline void ep10demo_program_init(PIO pio, uint sm, uint offset, uint pin, float freq) {
+    pio_sm_config c = ep10demo_program_get_default_config(offset);
+    // Map the state machine's OUT pin group to one pin, namely the `pin`
+    // parameter to this function.
+    sm_config_set_set_pins(&c, pin, 4);
+    // Set this pin's GPIO function (connect PIO to the pad)
+    pio_gpio_init(pio, pin);
+	pio_gpio_init(pio, pin+1);
+	pio_gpio_init(pio, pin+2);
+	pio_gpio_init(pio, pin+3);
+    // Set the pin direction to output at the PIO
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 4, true);
+	// set the state machine clock rate
+	float div = clock_get_hz(clk_sys) / freq ;  // calculates the clock divider
+	sm_config_set_clkdiv(&c, div);
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+#endif
+
