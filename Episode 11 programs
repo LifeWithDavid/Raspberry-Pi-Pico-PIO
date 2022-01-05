@@ -1,0 +1,267 @@
+Episode 11
+PIO forced and exec instructions 
+Public labels in C and forced and exec instructions in MicroPython
+
+************************************
+Episode 11, Example 1 C PIO program
+************************************
+/* PIO Episode 11, Example 1, written for C
+ This PIO program has 4 entry points: blink led 0 using PIO, 
+ blink led 1 using an alternate entry using PIO,
+ blink led 2 using instructions from tx fifo, 
+ blink an led "0,1,2,3" sequence using PIO plus a modified instruction stored in "X"
+*/
+.program	ep11demo
+
+
+public led0_entry:
+led0:
+	set Y, 31					;   Initial delay for off timer
+	set pins, 0   		[31]	;   Turns off LED
+led0_off:						//	Start of off delay timer
+	jmp Y-- led0_off 	[31]	;	jumps to "led0_off" if Y is not 0, then decrement Y
+	set Y, 31					;	Initial delay for on timer
+	set pins, 1   		[31]	;	Turns LED on
+led0_on:						//	start of on delay timer
+	jmp Y-- led0_on   	[31]	;	jumps to "led0_on" if y is not 0, then decrement Y
+	jmp led0					;	back to the turn led 0 off
+	
+public led1_entry:	
+led1:
+	set Y, 31					;   Initial delay for off timer
+	set pins, 0   		[31]	;   Turns off LED
+led1_off:						//	Start of off delay timer
+	jmp Y-- led1_off 	[31]	;	jumps to "led1_off" if Y is not 0, then decrement Y
+	set Y, 31					;	Initial delay for on timer
+	set pins, 2   		[31]	;	Turns LED on
+led1_on:						//	start of on delay timer
+	jmp Y-- led1_on   	[31]	;	jumps to "led1_on" if y is not 0, then decrement Y
+	jmp led1					;	back to the turn led 1 off
+
+public led2_entry:
+osr_exec_entry:
+	pull						;   pull instruction from TX FIFO into OSR
+	out exec, 32				;	get instruction from osr
+	jmp osr_exec_entry			;	jump back to get next instruction
+
+public led3_entry:
+mov_exec_entry:
+	pull noblock				;	pull instruction from TX FIFO into OSR
+	mov x, osr					;   and put instruction into X scratch register
+	set Y, 31					;   Initial delay for off timer
+	set pins, 0   		[31]	;   Turns off LED
+leds_off:					    //  Start of off delay timer
+	jmp Y-- leds_off    [31]    ;	jumps to "leds_off" if Y is not 0, then decrement Y
+	set Y, 31					;	Initial delay for on timer
+	mov exec, x			[31]	;	use instruction in X to turn selected led on 
+leds_on:						//	start of on delay timer
+	jmp Y-- leds_on 	[31]	;	jumps to "leds_on" if y is not 0, then decrement Y
+	jmp mov_exec_entry			;	back to the turn mov_exec_entry
+	
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void ep11demo_program_init(PIO pio, uint sm, uint offset, uint pin, float freq) {
+    pio_sm_config c = ep11demo_program_get_default_config(offset);
+
+    // Map the state machine's OUT pin group to one pin, namely the `pin`
+    // parameter to this function.
+    sm_config_set_set_pins(&c, pin, 4);
+	
+    // Set this pin's GPIO function (connect PIO to the pad)
+    pio_gpio_init(pio, pin);
+	pio_gpio_init(pio, pin+1);
+	pio_gpio_init(pio, pin+2);
+	pio_gpio_init(pio, pin+3);
+	
+    // Set the pin direction to output at the PIO
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 4, true);
+	
+	// set the state machine clock rate
+	float div = clock_get_hz(clk_sys) / freq ;  // calculates the clock divider
+	sm_config_set_clkdiv(&c, div);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+	
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
+***************************************
+Episode 11, Example 1 C main program
+***************************************
+/**
+ * Episode 11 Example 1
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+// Our assembled program:
+#include "ep11demo.pio.h"
+
+int main() {
+
+    // Choose which PIO instance to use (there are two instances)
+    PIO pio = pio0;
+	// Our assembled program needs to be loaded into this PIO's instruction
+    // memory. This SDK function will find a location (offset) in the
+    // instruction memory where there is enough space for our program. We need
+    // to remember this location!
+    uint offset = pio_add_program(pio, &ep11demo_program);
+	
+	// Assign GPIO3 as the blinking LED
+	uint BLINK_LED_PIN = 0;
+	
+	// Set out jump pin, which controls the blinking to 16
+//	uint JUMP_PIN_NUMBER = 16;
+	
+	// select the desired state machine clock frequency 
+	float SM_CLK_FREQ = 3000;
+
+    // Find a free state machine on our chosen PIO (erroring if there are
+    // none). Configure it to run our program, and start it, using the
+    // helper function we included in our .pio file.
+    uint sm = pio_claim_unused_sm(pio, true);
+	ep11demo_program_init(pio, sm, offset, BLINK_LED_PIN, SM_CLK_FREQ);
+
+    // The state machine is now running. 
+	while(true){
+		
+		//Blink led 0 for 10 seconds	
+		sleep_ms(10000);
+		
+		//Blink led 1 for 10 seconds
+		//pio_sm_exec(pio, sm, pio_encode_jmp(7 + offset));
+		pio_sm_exec(pio, sm, pio_encode_jmp(ep11demo_offset_led1_entry+offset));
+		sleep_ms(10000);
+		
+		// Blink led 2 using instructions sent to tx fifo
+		pio_sm_exec(pio, sm, pio_encode_jmp(ep11demo_offset_led2_entry + offset));
+		for (int i = 0; i < 14; ++i){
+			pio_sm_put (pio, sm,  pio_encode_set (pio_pins, 0)); //turn off leds
+			sleep_ms(357);
+			pio_sm_put (pio, sm,  pio_encode_set (pio_pins, 4)); //turn on led 2
+			sleep_ms(357);
+		}	
+		// blink led 0 through 4 using mov exec
+		// send instruction to turn on led 3 to TX FIFO
+		pio_sm_put_blocking (pio, sm,  pio_encode_set (pio_pins, 8));
+		pio_sm_exec(pio, sm, pio_encode_jmp(ep11demo_offset_led3_entry + offset)); 	//jump to PIO "mov_exec_entry"
+		for (int j = 0; j < 3; ++j){  					//run through sequence 3 times
+			for (int i = 0; i <= 3; ++i){ 				// generates blinking sequence "0,1,2,3"
+				pio_sm_put_blocking (pio, sm,  pio_encode_set (pio_pins, 1u << i));
+			}
+		}
+		sleep_ms(4200); // a little delay to allow TX FIFO to flush
+		//set up to blink led 0 again
+		pio_sm_exec(pio, sm, pio_encode_jmp(ep11demo_offset_led0_entry + offset));  // jump to beginning of PIO program
+	}
+}
+**************************************************
+Episode 11, Example 2 MicroPython program
+**************************************************
+# PIO Episode 11, Example 2
+# Using Exec instructions with MicroPython
+# Blinks LED 0 through 3 with varying pattersn
+# using exec commands in main program
+
+from rp2 import PIO, StateMachine, asm_pio
+from machine import Pin, mem32
+import time
+import utime
+
+def SmAddr(smNumber):            # Returns the address of the State Machine SMx_ADDR register
+  return mem32[0x502000D4 + ((smNumber >> 2) << 20) + (24 * (smNumber & 3))]
+  
+@asm_pio(set_init=(PIO.OUT_LOW,) * 4)    # set up 4 GPIO pins as outputs
+def ep11_blink():                        # Name the PIO program "ep11_blink"
+
+#Loop 0
+#public led0_entry:               C version
+    label ("led0")              # led0:
+    set(y,31)                   # set Y, 31             ;loads initial value for off delay timer
+    set(pins, 0)    [31]        # set pins, 0      [31] ;turn off all LEDs    
+    label ("led0_off")          # led0_off:              Start of off delay timer
+    jmp(y_dec, "led0_off") [31] # jmp Y-- led0_off [31] ;Jumps to "led0_off" if Y is not 0, then decrement Y
+    set(y,31)                   # set Y, 31             ;loads initial value for on delay timer
+    set(pins, 1)    [31]        # set pins, 1      [31] ;turn on LED 0
+    label ("led0_on")           # led0_on:               Start of on delay timer
+    jmp(y_dec, "led0_on")  [31] # jmp Y-- led0_on  [31] ;jumps to "delay_on" if y is not 0, then decrement Y
+    jmp("led0")                 # jmp led0              ;Jumps to the beginning of the led0 blink routine
+
+#Loop 1
+#public led1_entry:               C version
+    label ("led1")              # led1:
+    set(y,31)                   # set Y, 31             ;loads initial value for off delay timer
+    set(pins, 0)    [31]        # set pins, 0      [31] ;turn off all LEDs    
+    label ("led1_off")          # led1_off:              Start of off delay timer
+    jmp(y_dec, "led1_off") [31] # jmp Y-- led1_off [31] ;Jumps to "led1_off" if Y is not 0, then decrement Y
+    set(y,31)                   # set Y, 31             ;loads initial value for on delay timer
+    set(pins, 2)    [31]        # set pins, 2      [31] ;turn on LED 0
+    label ("led1_on")           # led1_on:               Start of on delay timer
+    jmp(y_dec, "led1_on")  [31] # jmp Y-- led0_on  [31] ;jumps to "led1_on" if y is not 0, then decrement Y
+    jmp("led1")                 # jmp led1              ;Jumps to the beginning of the led1 blink routine
+
+#Loop 2
+#public led2_entry:               C version
+    label ("osr_exec_entry")    # osr_exec_entry:
+    pull()                      # pull                  ; pull instruction from TX FIFO into OSR (default blocking)
+    out(exec,32)                # out exec, 32          ; get instruction from OSR
+    jmp("osr_exec_entry")       # jmp osr_exec_entry    ; jump back to get next instruction
+
+#Loop 3
+#public led3_entry:               C version
+    label("mov_exec_entry")     # mov_exec_entry:
+    pull(noblock)               # pull noblock          ; Loads OSR with data
+    mov(x,osr)                  # mov x, osr            ; and puts instruction into X scratch register
+    set(y,31)                   # set Y, 31             ; Initial delay for off timer
+    set(pins, 0)           [31] # set pins, 0      [31] ; Turns off all LEDs
+    label("leds_off")           # leds_off:               Start of off delay timer
+    jmp(y_dec, "leds_off") [31] # jmp Y-- leds_off [31] ; jumps to "leds_off" if Y is not 0, then decrement Y
+    set(y,31)                   # set Y, 31             ; Initial delay for on timer
+    mov(exec, x)           [31] # mov exec, x      [31] ; use instruction in X to turn selected led on 
+    label("leds_on")            # leds_on:                start of on delay timer 
+    jmp(y_dec, "leds_on")  [31] # jmp Y-- leds_on  [31] ; jumps to "leds_on" if y is not 0, then decrement Y
+    jmp("mov_exec_entry")       # jmp mov_exec_entry    ; back to mov_exec_entry
+
+sm1 = StateMachine(1, ep11_blink, freq=3000, set_base=Pin(0)) # Configure state machine 1 
+adr = SmAddr(1)                                               # Grab the starting address of the PIO program
+print("State Machine {} program offset = {}".format(1, hex(adr))) # Print the initial address of PIO program
+sm1.active(1)                                                 # start State Machine 1
+
+while True:
+# Blink led 0 for 10 seconds
+    utime.sleep(10)                                # continue blinking for 10 seconds
+    
+# Blink led 1 for 10 seconds    
+    sm1.exec("set(x,{})".format(adr + 7))          # Enters desired PC value into X ("led1")
+    sm1.exec("mov(pc, x)")                         # Moves X register into PC
+    utime.sleep(10)                                # continue blinking for 10 seconds
+    
+# Blink led 2 using instructions sent to tx fifo    
+    i = 0
+    sm1.exec("set(x,{})".format(adr + 14))         # Enters desired PC value into X ("osr_exec_entry")
+    sm1.exec("mov(pc, x)")                         # Moves X register into PC
+    while i < 14:                                  # Blink LED2 9 times
+        i += 1                                     # Increment counter
+        sm1.put(rp2.asm_pio_encode("set(pins, 0)", 0))  # Encode the instruction and send to TX FIFO
+        utime.sleep_ms(357)                             # Off for ~ 1/3 second
+        sm1.put(rp2.asm_pio_encode("set(pins, 4)", 0))  # Encode the instruction and send to TX FIFO
+        utime.sleep_ms(357)                             # On for ~ 1/3 second
+
+# Blink led 0 through 4 using mov exec
+
+    sm1.exec("set(x,{})".format(adr + 17))        # Enters desired PC value into X ("mov_exec_entry")
+    sm1.exec("mov(pc, x)")                        # Moves X register into PC
+# send instruction to turn on led 3 to TX FIFO
+    sm1.put(rp2.asm_pio_encode("set(pins, 8)", 0))# Initially turn on led3    
+    for j in range(3):                            # Do sequence 3 times
+        for i in range(4):                        # blink 4 leds sequentially
+            sm1.put(rp2.asm_pio_encode("set(pins, {})".format(1<<i), 0)) #Encode the instruction and send to TX FIFO 
+    utime.sleep_ms(4200)                          # sleep for a little over 4 seconds to flush the TX FIFO
+#start at the beginning     
+    sm1.restart()                                 # Use restart command to reset the PC to the start of the PIO program
+    
