@@ -1,5 +1,5 @@
 ****************************
-hello.C.ino
+hello.c.ino
 ****************************
 
 #include <hardware/pio.h>
