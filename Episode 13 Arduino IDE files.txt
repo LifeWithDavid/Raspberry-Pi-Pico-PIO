@@ -65,3 +65,6 @@ static inline void hello_program_init(PIO pio, uint sm, uint offset, uint pin) {
 %}
 
 *******************************
+Earle Philhower RP2040 core link:
+
+https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json
