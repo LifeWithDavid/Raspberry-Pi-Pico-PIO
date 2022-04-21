@@ -1,0 +1,193 @@
+*********************************************
+AWG_1.c Arbitary Waveform Generator C Program
+*********************************************
+#include <stdio.h>
+#include <math.h>
+#include "pico/stdlib.h"
+#include "hardware/dma.h"
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+// Our assembled program:
+#include "AWG_1.pio.h"
+
+#define PI 3.1428592654
+#define SM_CLK_FREQ 10000
+int main()
+{
+	stdio_init_all();  // set up to print out
+	uint OUT_PIN_NUMBER = 8; //Start of output pin group
+	uint NPINS = 8; //Number of output pins
+	uint bufdepth=256; //the number of samples in the AWG buffer table, must be a power of 2 (i.ie, 2,4,8,16,32,64...)
+	float factor;
+	
+	// Choose which PIO instance to use (there are two instances)
+    PIO pio = pio0;
+	uint sm = pio_claim_unused_sm(pio, true);
+	uint offset = pio_add_program(pio, &pio_byte_out_program);
+    pio_byte_out_program_init(pio, sm, offset, OUT_PIN_NUMBER, NPINS, SM_CLK_FREQ);
+
+	// wave_dma_chan_a and wave_dma_chan_b loads AWG buffer table to PIO in ping pong method
+	int wave_dma_chan_a = dma_claim_unused_channel(true);
+    int wave_dma_chan_b = dma_claim_unused_channel(true);
+		
+	// define the waveform buffer to hold the waveform
+    uint8_t awg_buff[256] __attribute__((aligned(256))); 
+
+	for (int i = 0; i < bufdepth; ++i) {
+		factor=(float)i/bufdepth; //convert interger division to floating point
+		// put the AWG formula here:
+		awg_buff[i] = 128+(sin((factor)*2*PI)*127); //Loads the AWG Buffer table with values of the wave
+	}
+		
+	//set up the wave_dma_chan_a DMA channel
+    dma_channel_config wave_dma_chan_a_config = dma_channel_get_default_config(wave_dma_chan_a);
+    // Transfers 32-bits at a time, increment read address so we pick up a new table value each
+    // time, don't increment write address so we always transfer to the same PIO register.
+    channel_config_set_transfer_data_size(&wave_dma_chan_a_config, DMA_SIZE_32); //Transfer 32 bits at a time (4 bytes)
+    channel_config_set_read_increment(&wave_dma_chan_a_config, true);
+    channel_config_set_write_increment(&wave_dma_chan_a_config, false);
+	channel_config_set_chain_to(&wave_dma_chan_a_config, wave_dma_chan_b); //after block has been transferred, wave_dma_chan b
+    channel_config_set_dreq(&wave_dma_chan_a_config, DREQ_PIO0_TX0);// Transfer when PIO asks for a new value
+	channel_config_set_ring(&wave_dma_chan_a_config, false, 8); //wrap every 256 bytes
+	
+	// Setup the wave_dma_chan_b DMA channel
+    dma_channel_config wave_dma_chan_b_config = dma_channel_get_default_config(wave_dma_chan_b);
+    // Transfers 32-bits at a time, increment read address so we pick up a new wave value each
+    // time, don't increment writes address so we always transfer to the same PIO register.
+    channel_config_set_transfer_data_size(&wave_dma_chan_b_config, DMA_SIZE_32); //Transfer 32 bits at a time (4 bytes)
+    channel_config_set_read_increment(&wave_dma_chan_b_config, true);
+    channel_config_set_write_increment(&wave_dma_chan_b_config, false);
+	channel_config_set_chain_to(&wave_dma_chan_b_config, wave_dma_chan_a);//after block has been transferred, wave_dma_chan a
+	channel_config_set_dreq(&wave_dma_chan_b_config, DREQ_PIO0_TX0); // Transfer when PIO asks for a new value
+	channel_config_set_ring(&wave_dma_chan_b_config, false, 8);	//wrap every 256 bytes (2**8)
+	
+    // Setup the first wave DMA channel for PIO output
+    dma_channel_configure(
+        wave_dma_chan_a,
+        &wave_dma_chan_a_config,
+        &pio0_hw->txf[sm], // Write address (sm1 transmit FIFO)
+        awg_buff, // Read values from fade buffer
+        bufdepth, // 256 values to copy
+        false // Don't start yet.
+	);
+    // Setup the second wave DMA channel for PIO output
+    dma_channel_configure(
+        wave_dma_chan_b,
+        &wave_dma_chan_b_config,
+        &pio0_hw->txf[sm], // Write address (sm1 transmit FIFO)
+        awg_buff, // Read values from fadeoff buffer
+        bufdepth, // 256 values to copy
+        false //  Don't start yet.
+    );
+	
+    // Everything is ready to go. Now start the first DMA
+    dma_start_channel_mask(1u << wave_dma_chan_a);
+
+    // This section for communicating with terminal; either debugging or future control
+	while(true) {
+        for  (int k = 0; k<256; ++k)  {
+			printf("awg_buff[%i]: %i sm: %i \n", k, awg_buff[k], sm);
+			printf(" wave_dma_chan_a: %i wave_dma_chan_b: %i \n", wave_dma_chan_a, wave_dma_chan_b);
+			//printf("ch#: %i &dma_hw->ch[wave_dma_chan_b].al2_write_addr_trig: %i \n", dma_hw->ch[wave_dma_chan_b].al2_write_addr_trig, &dma_hw->ch[wave_dma_chan_b].al2_write_addr_trig);
+			sleep_ms(100);
+		}	
+    }
+}
+
+*************************************************
+AWG_1.PIO Arbitary Waveform Generator PIO Program
+*************************************************
+;
+; Raspberry Pi Pico
+; PIO Episode 14 Abitrary Waveform Generator
+; PIO program
+;
+
+.program pio_byte_out
+
+; Parallel output 4 bytes per 32 bit word.  
+
+.wrap_target
+    out pins, 8
+.wrap
+
+// configure the pio_byte_out program
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void pio_byte_out_program_init(PIO pio, uint sm, uint offset, uint pin, uint npins, float freq) {
+
+    // Set the pin group GPIO function (connect PIO to the pad)
+	// "pin" is start of output pin group, "npins" is the number of pins in the output pin group
+    for(uint j=pin; j<(pin+npins); j++) {
+		pio_gpio_init(pio, j);
+	}
+	
+    // Set the pin group's direction to output 
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, npins, true);
+    pio_sm_config c = pio_byte_out_program_get_default_config(offset);
+
+    // Map the DAC outputs to 'npins' starting at 'pin'
+	sm_config_set_out_pins(&c, pin, npins);
+
+	// set the state machine clock rate
+	float div = clock_get_hz(clk_sys) / freq ;  // calculates the clock divider
+	sm_config_set_clkdiv(&c, div);
+	
+	//set up autopull
+	sm_config_set_out_shift(&c, true, true, 32);
+	
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+	
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
+
+*****************************************************
+CMakeLists.txt Arbitary Waveform Generator CMakeLists
+*****************************************************
+
+cmake_minimum_required(VERSION 3.19.8)
+
+# Pull in SDK (must be before project)
+include(pico_sdk_import.cmake)
+
+project(AWG_1 C CXX ASM
+)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+
+set(PICO_EXAMPLES_PATH ${PROJECT_SOURCE_DIR})
+
+# Initialize the SDK
+pico_sdk_init()
+
+add_executable(${PROJECT_NAME}
+	AWG_1.c
+	AWG_1.pio
+)
+pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/AWG_1.pio)
+
+#target_sources(AWG_1.pio PRIVATE AWG_1.c)
+# Pull in our pico_stdlib which pulls in commonly used features
+target_link_libraries(${PROJECT_NAME}
+        pico_stdlib
+        hardware_pio
+		hardware_dma
+        hardware_irq
+		hardware_structs
+        )
+
+# create map/bin/hex file etc.
+pico_add_extra_outputs(${PROJECT_NAME})
+
+# Enable usb output, disable uart output
+pico_enable_stdio_usb(${PROJECT_NAME} 1)
+pico_enable_stdio_uart(${PROJECT_NAME} 0)
+
+
+
+
+
