@@ -61,7 +61,7 @@ int main()
 			for(cyclecount=0; cyclecount<numcycle; ++cyclecount) {  // steps through all the cycles in the buffer
 				for(cyclestep = 0; cyclestep<cyclelength; ++cyclestep) { //steps through one of the several cycles
 					factor = (float)cyclestep/cyclelength;
-					if (polarity = -1) {
+					if (polarity == -1) {         //polarity "if" statement incorrect in video; corrected here 
 						if(factor<duty) awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] = 255-((255/duty)*factor);
 						else awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] =255-((255/duty)*(1-factor));
 					}
@@ -78,7 +78,7 @@ int main()
 			for(cyclecount=0; cyclecount<numcycle; ++cyclecount) {  // steps through all the cycles in the buffer
 				for(cyclestep = 0; cyclestep<cyclelength; ++cyclestep) { //steps through one of the several cycles
 					factor = (float)cyclestep/cyclelength;
-					if (polarity = -1) {
+					if (polarity == -1) {             //polarity "if" statement incorrect in video; corrected here 
 						if(factor<duty) awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] = 255;
 						else awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] =0;
 					}
