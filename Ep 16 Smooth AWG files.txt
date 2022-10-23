@@ -1,0 +1,290 @@
+*************PIO CHRONICLES EPISODE 16, SMOOTHER AWG***********
+
+*************C code for SmoothWide AWG***********
+*************File name: AWG_1.c ***********
+// ** Specify libraries and programs
+#include <stdio.h>
+#include <math.h>
+#include "pico/stdlib.h"
+#include "hardware/dma.h"
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+#include "AWG_1.pio.h" // Our assembled PIO program
+#define PI 3.14159
+
+int main()
+{
+// ** Initialize variables 
+	stdio_init_all();  // set up to print out
+	uint OUT_PIN_NUMBER = 8; //Start of output pin group
+	uint NPINS = 8; //Number of output pins
+	uint bufdepth=4096; //the number of samples in the AWG buffer table, must be a power of 2 (i.ie, 2,4,8,16,32,64...)
+	float factor;
+	uint cyclecount;
+	uint cyclestep;
+	uint cyclelength;
+	uint numcycle  ; //The number of cycles contained in the buffer, ie. 4 means four full cycles in the buffer
+	float numfloat; //this is a floating point variable to hold the results of the numcycle calc before truncation
+	uint SM_CLK_FREQ=125000000;	
+	uint wavefreq;
+	char str[10];
+	// define the waveform buffer to hold the waveform
+    uint8_t awg_buff[4096] __attribute__((aligned(4096)));
+ 	
+// ** Select wave parameters
+	char type = 'S'; //'S' for sine, 'T' for triangle, 'P' for square (pulse) wave
+	uint freq = 4000000;
+	float duty=.5; //0 to 1
+	int polarity = 1; // -1 for inverted signal from pico, will invert again from amplifier
+	
+// ** Select between high speed and variable speed SM_CLK_FREQ
+	if (freq > 1800000) {
+// ** Determine number of cycles in wavetable and the State Machine Clock Frequency
+		numfloat= (float)freq * bufdepth / SM_CLK_FREQ; //floating point result to handle big numbers
+		numcycle = numfloat;  //Truncation process to get an interger value
+	}
+		else {
+			if (freq > 50000) {
+				numcycle = 64 ;
+				SM_CLK_FREQ = (float) freq * bufdepth / numcycle ;
+			}
+			else {
+				numcycle = 16 ;
+				SM_CLK_FREQ = (float) freq * bufdepth / numcycle ;
+			}
+		}
+	
+
+// ** Fill wavetable with data	
+    switch(type){	
+	// for sine wave
+		case 'S' :
+			for (int i = 0; i < bufdepth; ++i) {
+				factor=(float)numcycle*i/bufdepth; //convert integer division to floating point
+				// put the AWG formula here:
+				awg_buff[i] = 128+(sin((factor)*2*PI)*127); //Loads the AWG Buffer table with values of the sine wave
+			}
+			break;		
+	//For triangle and sawtooth wave
+		case 'T':
+			cyclelength = bufdepth/numcycle ;
+			for(cyclecount=0; cyclecount<numcycle; ++cyclecount) {  // steps through all the cycles in the buffer
+				for(cyclestep = 0; cyclestep<cyclelength; ++cyclestep) { //steps through one of the several cycles
+					factor = (float)cyclestep/cyclelength;
+					if (polarity == -1) {
+						if(factor<duty) awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] = 255-((255/duty)*factor);
+						else awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] =255-((255/duty)*(1-factor));
+					}
+					else {
+						if(factor<duty) awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] = (255/duty)*factor;
+						else awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] =(255/duty)*(1-factor);
+					}
+				}
+			}
+			break;
+	// For Square wave
+		case 'P':
+			cyclelength = bufdepth/numcycle ;
+			for(cyclecount=0; cyclecount<numcycle; ++cyclecount) {  // steps through all the cycles in the buffer
+				for(cyclestep = 0; cyclestep<cyclelength; ++cyclestep) { //steps through one of the several cycles
+					factor = (float)cyclestep/cyclelength;
+					if (polarity == -1) {
+						if(factor<duty) awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] = 255;
+						else awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] =0;
+					}
+					else {
+						if(factor<duty) awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] = 0;
+						else awg_buff[(cyclecount*bufdepth/numcycle)+cyclestep] =255;
+					}
+				}
+			}
+			break;
+	}
+	
+// ** Initialize PIO
+	
+	// Choose which PIO instance to use (there are two instances)
+    PIO pio = pio0;
+	uint sm = pio_claim_unused_sm(pio, true);
+	uint offset = pio_add_program(pio, &pio_byte_out_program);
+    pio_byte_out_program_init(pio, sm, offset, OUT_PIN_NUMBER, NPINS, SM_CLK_FREQ);
+	
+// ** Initialize DMA
+	// wave_dma_chan_a and wave_dma_chan_b loads AWG buffer table to PIO in ping pong method
+	int wave_dma_chan_a = dma_claim_unused_channel(true);
+    int wave_dma_chan_b = dma_claim_unused_channel(true);
+		
+
+		
+	//set up the wave_dma_chan_a DMA channel
+    dma_channel_config wave_dma_chan_a_config = dma_channel_get_default_config(wave_dma_chan_a);
+	channel_config_set_chain_to(&wave_dma_chan_a_config, wave_dma_chan_b); //after block has been transferred, wave_dma_chan b
+    channel_config_set_dreq(&wave_dma_chan_a_config, DREQ_PIO0_TX0);// Transfer when PIO asks for a new value
+	channel_config_set_ring(&wave_dma_chan_a_config, false, 12); //wrap every 4096 bytes
+	
+	// Setup the wave_dma_chan_b DMA channel
+    dma_channel_config wave_dma_chan_b_config = dma_channel_get_default_config(wave_dma_chan_b);
+	channel_config_set_chain_to(&wave_dma_chan_b_config, wave_dma_chan_a);//after block has been transferred, wave_dma_chan a
+	channel_config_set_dreq(&wave_dma_chan_b_config, DREQ_PIO0_TX0); // Transfer when PIO asks for a new value
+	channel_config_set_ring(&wave_dma_chan_b_config, false, 12);	//wrap every 4096 bytes (2**8)
+	
+    // Setup the first wave DMA channel for PIO output
+    dma_channel_configure(
+        wave_dma_chan_a,
+        &wave_dma_chan_a_config,
+        &pio0_hw->txf[sm], // Write address (sm1 transmit FIFO)
+        awg_buff, // Read values from waveform buffer
+        bufdepth, // 4096 values to copy
+        false // Don't start yet.
+	);
+    // Setup the second wave DMA channel for PIO output
+    dma_channel_configure(
+        wave_dma_chan_b,
+        &wave_dma_chan_b_config,
+        &pio0_hw->txf[sm], // Write address (sm1 transmit FIFO)
+        awg_buff, // Read values from waveform buffer
+        bufdepth, // 4096 values to copy
+        false //  Don't start yet.
+    );
+
+// ** Everything is ready to go. Now start the first DMA
+    dma_start_channel_mask(1u << wave_dma_chan_a);
+
+// ** Communications for debugging and future enhancements
+	sleep_ms(40000);
+	while(true) {
+        for  (int k = 0; k<bufdepth; ++k)  {
+	//		printf("Enter the desired wave frequency: ");
+	//		scanf("%s",&str);
+	//		wavefreq = atoi(str);
+	//		printf("You entered:  %i Counter: %i \n",wavefreq, k);	
+	//		wavefreq = 0;
+			printf("awg_buff[%i]: %i sm: %i CLK: %i numcycle: %i freq: %i \n", k, awg_buff[k], sm, SM_CLK_FREQ, numcycle, freq);
+	//		printf(" wave_dma_chan_a: %i wave_dma_chan_b: %i \n", wave_dma_chan_a, wave_dma_chan_b);
+			//printf("ch#: %i &dma_hw->ch[wave_dma_chan_b].al2_write_addr_trig: %i \n", dma_hw->ch[wave_dma_chan_b].al2_write_addr_trig, &dma_hw->ch[wave_dma_chan_b].al2_write_addr_trig);
+			sleep_ms(200);
+		}	
+    }
+}
+
+**************PIO Program for smoother AWG***********
+**************File name: AWG_1.PIO **************
+;
+; Raspberry Pi Pico
+; PIO Episode 16 Smoother Abitrary Waveform Generator
+; PIO program
+;
+
+.program pio_byte_out
+
+; Parallel output 4 bytes per 32 bit word.  
+
+.wrap_target
+    out pins, 8
+.wrap
+
+// configure the pio_byte_out program
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void pio_byte_out_program_init(PIO pio, uint sm, uint offset, uint pin, uint npins, float freq) {
+
+    // Set the pin group GPIO function (connect PIO to the pad)
+	// "pin" is start of output pin group, "npins" is the number of pins in the output pin group
+    for(uint j=pin; j<(pin+npins); j++) {
+		pio_gpio_init(pio, j);
+	}
+	
+    // Set the pin group's direction to output 
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, npins, true);
+    pio_sm_config c = pio_byte_out_program_get_default_config(offset);
+
+    // Map the DAC outputs to 'npins' starting at 'pin'
+	sm_config_set_out_pins(&c, pin, npins);
+
+	// set the state machine clock rate
+	float div = clock_get_hz(clk_sys) / freq ;  // calculates the clock divider
+	sm_config_set_clkdiv(&c, div);
+	
+	//set up autopull
+	sm_config_set_out_shift(&c, true, true, 32);
+	
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+	
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
+
+**************CMakeLists.txt ****************
+**************finename: CMakeLists.txt *******
+
+cmake_minimum_required(VERSION 3.19.8)
+
+# Pull in SDK (must be before project)
+include(pico_sdk_import.cmake)
+
+
+project(AWG_1 C CXX ASM
+)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+
+set(PICO_EXAMPLES_PATH ${PROJECT_SOURCE_DIR})
+
+# Initialize the SDK
+pico_sdk_init()
+
+add_executable(${PROJECT_NAME}
+	AWG_1.c
+	AWG_1.pio
+)
+pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/AWG_1.pio)
+
+#target_sources(AWG_1.pio PRIVATE AWG_1.c)
+# Pull in our pico_stdlib which pulls in commonly used features
+target_link_libraries(${PROJECT_NAME}
+        pico_stdlib
+        hardware_pio
+		hardware_dma
+        hardware_irq
+		hardware_structs
+        )
+
+# create map/bin/hex file etc.
+pico_add_extra_outputs(${PROJECT_NAME})
+
+# Enable usb output, disable uart output
+pico_enable_stdio_usb(${PROJECT_NAME} 1)
+pico_enable_stdio_uart(${PROJECT_NAME} 0)
+
+
+
+# add url via pico_set_program_url
+#example_auto_set_url(blink2)
+
+
+# Hardware-specific examples in subdirectories:
+#add_subdirectory(adc)
+#add_subdirectory(clocks)
+#add_subdirectory(cmake)
+#add_subdirectory(divider)
+#add_subdirectory(dma)
+#add_subdirectory(flash)
+#add_subdirectory(gpio)
+#add_subdirectory(i2c)
+#add_subdirectory(interp)
+#add_subdirectory(multicore)
+#add_subdirectory(picoboard)
+#add_subdirectory(pio)
+#add_subdirectory(pwm)
+#add_subdirectory(reset)
+#add_subdirectory(rtc)
+#add_subdirectory(spi)
+#add_subdirectory(system)
+#add_subdirectory(timer)
+#add_subdirectory(uart)
+#add_subdirectory(usb)
+#add_subdirectory(watchdog)
+
