@@ -1,0 +1,418 @@
+**********************************************************************
+;
+; Midi PIO program 1
+; Life with David
+;
+
+.program uart_tx
+.side_set 1 opt
+
+; An 8n1 UART transmit program.
+; OUT pin 0 and side-set pin 0 are both mapped to UART TX pin.
+
+    pull       side 1 [7]  ; Assert stop bit, or stall with line in idle state
+    set x, 7   side 0 [7]  ; Preload bit counter, assert start bit for 8 clocks
+bitloop:                   ; This loop will run 8 times (8n1 UART)
+    out pins, 1            ; Shift 1 bit from OSR to the first OUT pin
+    jmp x-- bitloop   [6]  ; Each loop iteration is 8 cycles.
+
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void uart_tx_program_init(PIO pio, uint sm, uint offset, uint pin_tx, uint baud) {
+    // Tell PIO to initially drive output-high on the selected pin, then map PIO
+    // onto that pin with the IO muxes.
+    pio_sm_set_pins_with_mask(pio, sm, 1u << pin_tx, 1u << pin_tx);
+    pio_sm_set_pindirs_with_mask(pio, sm, 1u << pin_tx, 1u << pin_tx);
+    pio_gpio_init(pio, pin_tx);
+
+    pio_sm_config c = uart_tx_program_get_default_config(offset);
+
+    // OUT shifts to right, no autopull
+    sm_config_set_out_shift(&c, true, false, 32);
+
+    // We are mapping both OUT and side-set to the same pin, because sometimes
+    // we need to assert user data onto the pin (with OUT) and sometimes
+    // assert constant values (start/stop bit)
+    sm_config_set_out_pins(&c, pin_tx, 1);
+    sm_config_set_sideset_pins(&c, pin_tx);
+
+    // We only need TX, so get an 8-deep FIFO!
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+
+    // SM transmits 1 bit per 8 execution cycles.
+    float div = (float)clock_get_hz(clk_sys) / (8 * baud);
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+// here we use "uint" instead of "unsigned char" in order to get 0x00 to transmit
+// by transmitting the 8 lsbs of 0x100
+
+static inline void uart_tx_program_putc(PIO pio, uint sm, uint c) {
+    pio_sm_put_blocking(pio, sm, (uint32_t)c);
+}
+// here we use "uint" instead of "unsigned char" in order to get 0x00 to transmit
+// by transmitting the 8 lsbs of 0x100
+
+static inline void uart_tx_program_puts(PIO pio, uint sm, const uint *s) { 
+	while (*s != 0x100){ //uses 0x100 as a stop byte
+		uart_tx_program_putc(pio, sm, *(s++));
+    }
+}
+
+%}
+****************************************************************************************
+/**
+ * Midi demo 1 - Command on, command off 
+ * Life with David
+ */
+
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+#include "uart_tx.pio.h"
+
+int main() {
+    // This program plays middle C every 400 ms (200 ms on, 200 ms off)
+	// The note is turned off using the 82 command
+    const uint PIN_TX = 0;
+
+    const uint SERIAL_BAUD = 31250; //Baud rate for MIDI
+	uint msg[4];
+	msg[0] = 0x92; //Turn note on
+	msg[1] = 0x3c; //Note middle "C"
+	msg[2] = 0x7c; //High velocity (loud)
+	msg[3] = 0x100; // 0x100 signals end of midi event
+	
+    PIO pio = pio0; //Initialize PIO
+    uint sm = 0;
+    uint offset = pio_add_program(pio, &uart_tx_program);
+    uart_tx_program_init(pio, sm, offset, PIN_TX, SERIAL_BAUD);
+
+    while (true) {
+        uart_tx_program_puts(pio, sm, msg); //This sends message to PIO
+        sleep_ms(200); //Wait 200 msec
+		if (msg[0] == 0x92) // if last command was "note on", then "note off" next time
+		{msg[0] = 0x82; //instruction to turn the note off
+		}
+		else
+			msg[0] = 0x92; //If the last commmand wasn't "note on" then turn note on
+    }
+}
+*********************************************************************************************
+/** 
+ * Midi Demo 3; note turning off with velocity
+ * Life with David
+ */
+
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+#include "uart_tx.pio.h"
+
+int main() {
+    // This program plays middle C every 400 ms (200 ms on, 200 ms off)
+	//The note is turned off using a velocity of 0x00 and a command of 92
+    const uint PIN_TX = 0;
+    // This is the same as the default UART baud rate on Pico
+    const uint SERIAL_BAUD = 31250;
+	uint msg[3];
+	msg[0] = 0x92; // note on
+	msg[1] = 0x3c; // note pitch
+	msg[2] = 0x7c; //velocity
+	msg[3] = 0x100; //end of MIDI event
+	
+    PIO pio = pio0;
+    uint sm = 0;
+    uint offset = pio_add_program(pio, &uart_tx_program);
+    uart_tx_program_init(pio, sm, offset, PIN_TX, SERIAL_BAUD);
+
+    while (true) {
+        uart_tx_program_puts(pio, sm, msg); // Outputs message to PIO
+        sleep_ms(200);  //wait 200 msec
+		if (msg[2] == 0x7c)  // If velocity was 0x7c then turn note off
+		{msg[2] = 0x00; // Use 0x00 velocity to turn note off; 
+		}
+		else
+			msg[2] = 0x7c;
+    }
+}
+********************************************************************************************
+/**
+ * Midi demo 5 - two notes together - Note on/off
+ * Life with David
+ */
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+#include "uart_tx.pio.h"
+
+int main() {
+    // This program plays middle C every 400 ms (200 ms on, 200 ms off)
+	// The note is turned off using the 82 command
+    const uint PIN_TX = 0;
+    // This is the same as the default UART baud rate on Pico
+    const uint SERIAL_BAUD = 31250; //Baud rate for MIDI
+	uint msg[7];
+	msg[0] = 0x92; //Turn note on
+	msg[1] = 0x3c; //Note middle "C"
+	msg[2] = 0x7c; //High velocity (loud)
+	msg[3] = 0x92;
+	msg[4] = 0x40; // E above middle C
+	msg[5] = 0x7c;
+	msg[6] = 0x100; //stop byte
+
+    PIO pio = pio0; //Initialize PIO
+    uint sm = 0;
+    uint offset = pio_add_program(pio, &uart_tx_program);
+    uart_tx_program_init(pio, sm, offset, PIN_TX, SERIAL_BAUD);
+
+    while (true) {
+        uart_tx_program_puts(pio, sm, msg); //This sends message to PIO
+        sleep_ms(200); //Wait 200 msec
+		if (msg[0] == 0x92) // if last command was 'note on", then "note off" next time
+		{msg[0] = 0x82; //instruction to turn note off
+		msg[3] = 0x82;
+		}
+		else  {
+			msg[0] = 0x92; //If the last commmand was "note off" then turn "note on"
+			msg[3] = 0x92;
+		}	
+    }
+}
+**********************************************************************************************
+/**
+ * Midi demo 6 - three notes together
+ * Life with David
+ */
+
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+#include "uart_tx.pio.h"
+
+int main() {
+    // This program plays middle C every 400 ms (200 ms on, 200 ms off)
+	// The note is turned off using the 82 command
+    const uint PIN_TX = 0;
+    // This is the same as the default UART baud rate on Pico
+    const uint SERIAL_BAUD = 31250; //Baud rate for MIDI
+	uint msg[10];
+	msg[0] = 0x92; //Turn note on
+	msg[1] = 0x3c; //Note middle "C"
+	msg[2] = 0x7c; //High velocity (loud)
+	msg[3] = 0x92;
+	msg[4] = 0x40; // E above middle C
+	msg[5] = 0x7c;
+	msg[6] = 0x92;
+	msg[7] = 0x43; // G above middle C
+	msg[8] = 0x7c;
+	msg[9] = 0x100; //pad character
+
+	
+    PIO pio = pio0; //Initialize PIO
+    uint sm = 0;
+    uint offset = pio_add_program(pio, &uart_tx_program);
+    uart_tx_program_init(pio, sm, offset, PIN_TX, SERIAL_BAUD);
+
+    while (true) {
+        uart_tx_program_puts(pio, sm, msg); //This sends message to PIO
+        sleep_ms(200); //Wait 200 msec
+		if (msg[0] == 0x92) // if last command was "note on", then "note off" next time
+		{msg[0] = 0x82; //instruction to turn the note off
+		msg[3] = 0x82;
+		msg[6] = 0x82;
+		}
+		else  {
+			msg[0] = 0x92; //If the last commmand wasn't "note on" then turn note on
+			msg[3] = 0x92;
+			msg[6] = 0x92;
+		}	
+    }
+}
+****************************************************************************************
+/**
+ * Midi demo 4 - Climbing notes
+ * Life with David
+ */
+#include <stdio.h>
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+#include "uart_tx.pio.h"
+
+int main() {
+	stdio_init_all();  // set up to print out
+    // We're going to use PIO to send MIDI signals on the same GPIO which we
+    // normally attach UART0 to.
+    const uint PIN_TX = 0;
+
+    const uint SERIAL_BAUD = 31250; //Baud rate for Midi
+	uint msg[4];
+	msg[0] = 0x90; // Turn note on
+	msg[1] = 0x00; // Initial note C-1
+	msg[2] = 0x7c; // High velocity (loud)
+	msg[3] = 0x100;
+
+    PIO pio = pio0;
+    uint sm = 0;
+    uint offset = pio_add_program(pio, &uart_tx_program);
+    uart_tx_program_init(pio, sm, offset, PIN_TX, SERIAL_BAUD);
+	
+    while (true) {
+        uart_tx_program_puts(pio, sm, msg);
+        sleep_ms(200);
+		if (msg[0] == 0x90) {
+			msg[0] = 0x80;
+		}
+		else {
+			msg[0] = 0x90; 
+				if (msg[1] < 0x80 ) {//Step the notes from 0x00(C-1) to 0x7F(G9).
+					msg[1] = msg[1] + 1;
+				}
+				else  { 
+					msg[1] = 0x00; //reset pitch to 0x00(C-1), 
+				}	
+		}		
+			printf("command[%X, %X, %X]: \n", msg[0], msg[1], msg[2]);
+    }
+}
+************************************************************************************
+/**
+ * Midi demo 8 - Playing song
+ * Life with David
+ */
+#include <stdio.h>
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+#include "uart_tx.pio.h"
+
+#define BUTTON_GPIO 15
+
+int main() {
+	stdio_init_all();  // set up to print out
+    // We're going to use PIO to send MIDI signals on the same GPIO which we
+    // normally attach UART0 to.
+	gpio_init(BUTTON_GPIO);
+	gpio_set_dir(BUTTON_GPIO, GPIO_IN);
+	gpio_pull_up(BUTTON_GPIO);
+    const uint PIN_TX = 0;
+    // This is the baud rate for midi
+    const uint SERIAL_BAUD = 31250; //Baud rate for Midi
+	// Notes for "Mary had a Little Lamb""
+	uint notes[27] = {0x40,0x3e,0x3c,0x3e,0x40,0x40,0x40,0x3e,0x3e,0x3e,
+		0x40,0x43,0x43,0x40,0x3e,0x3c,0x3e,0x40,0x40,0x40,0x40,0x3e,0x3e,
+		0x40,0x3e,0x3c,0x00}; //0x00 flags end of song
+		
+	uint msg[4]	;
+	msg[0] = 0x90; // Turn note on
+	msg[1] = 0x100; // Initial note Middle C
+	msg[2] = 0x7c; // High velocity (loud)
+	msg[3] = 0x100; //end of midi event
+	
+    uint sequence = 0;//Steps through the notes of the song
+// Initialize PIO	
+    PIO pio = pio0;
+    uint sm = 0;
+    uint offset = pio_add_program(pio, &uart_tx_program);
+    uart_tx_program_init(pio, sm, offset, PIN_TX, SERIAL_BAUD);
+
+	while (gpio_get(BUTTON_GPIO)) //kill time while waiting for first button press
+			sleep_ms(10); 
+    while (true) {  // playing part of program
+        if(notes[sequence] == 0) //If the end of song reached (0x00) then start from beginning
+			sequence = 0;
+
+		msg[0] = 0x92; // Turn note on
+		msg[1] = notes[sequence]; // from note table
+		msg[2] = 0x7c; // High velocity (loud)	
+		uart_tx_program_puts(pio, sm, msg);//send info to pio for midi out
+//		printf("Note on: %X ,Value: %X, Velocity: %X , sequence: %i \n", msg[0], msg[1], msg[2], sequence);
+		for (int i=0;i<2;++i)
+//			printf("%X, ",msg[i]);
+		while (!gpio_get(BUTTON_GPIO)) {//kill time while button is pressed
+			sleep_ms(10);
+		}
+
+		msg[0] = 0x82; // Turn note off
+		msg[1] = notes[sequence]; // from note table
+		msg[2] = 0x7c; // High velocity (loud)
+		uart_tx_program_puts(pio, sm, msg);//send info to pio for midi out
+//		printf("Note off: %X ,Value: %X, Velocity: %X , sequence: %i \n", msg[0], msg[1], msg[2], sequence);
+		while (gpio_get(BUTTON_GPIO))//kill time waiting for button to be pressed
+			sleep_ms(10);
+		sequence = sequence +1;
+		}
+	}
+***************************************************************************************************************
+# cmakelists for MIDI, rename desired C program as "uart_tx.c" to compile
+# with "uart_tx.PIO" (top program in this file)
+
+
+cmake_minimum_required(VERSION 3.19.8)
+
+# Pull in SDK (must be before project)
+include(pico_sdk_import.cmake)
+
+
+project(uart_tx C CXX ASM
+)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+
+set(PICO_EXAMPLES_PATH ${PROJECT_SOURCE_DIR})
+
+# Initialize the SDK
+pico_sdk_init()
+
+add_executable(${PROJECT_NAME}
+	uart_tx.c
+	uart_tx.pio
+)
+pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/uart_tx.pio)
+
+#target_sources(uart_tx.pio PRIVATE uart_tx.c)
+# Pull in our pico_stdlib which pulls in commonly used features
+target_link_libraries(${PROJECT_NAME}
+        pico_stdlib
+        hardware_pio
+		hardware_dma
+        hardware_irq
+		hardware_structs
+        )
+
+# create map/bin/hex file etc.
+pico_add_extra_outputs(${PROJECT_NAME})
+
+# Enable usb output, disable uart output
+pico_enable_stdio_usb(${PROJECT_NAME} 1)
+pico_enable_stdio_uart(${PROJECT_NAME} 0)
+
+
+
+# add url via pico_set_program_url
+#example_auto_set_url(blink2)
+
+
+# Hardware-specific examples in subdirectories:
+#add_subdirectory(adc)
+#add_subdirectory(clocks)
+#add_subdirectory(cmake)
+#add_subdirectory(divider)
+#add_subdirectory(dma)
+#add_subdirectory(flash)
+#add_subdirectory(gpio)
+#add_subdirectory(i2c)
+#add_subdirectory(interp)
+#add_subdirectory(multicore)
+#add_subdirectory(picoboard)
+#add_subdirectory(pio)
+#add_subdirectory(pwm)
+#add_subdirectory(reset)
+#add_subdirectory(rtc)
+#add_subdirectory(spi)
+#add_subdirectory(system)
+#add_subdirectory(timer)
+#add_subdirectory(uart)
+#add_subdirectory(usb)
+#add_subdirectory(watchdog)
+
