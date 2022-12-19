@@ -1,0 +1,341 @@
+*********************************
+* Raspberry Pi Pico PIO 
+* Episode 18 - MicroPython MIDI programs
+* with a velocity sensor
+*********************************
+
+
+# MIDI Demo 3
+# Example using PIO to transmit a single note with midi using velocity to turn note on and off
+# 0x100 indicates the end of the midi event
+from machine import Pin
+from rp2 import PIO, StateMachine, asm_pio
+import utime
+import array
+
+UART_BAUD = 31250
+PIN_BASE = 0
+
+@asm_pio(sideset_init=PIO.OUT_HIGH, out_init=PIO.OUT_HIGH, out_shiftdir=PIO.SHIFT_RIGHT)
+def midi_tx():
+    pull()                        # Block until data available in TxFIFO
+    set(x, 7)  .side(0)       [7] # Initialise bit counter, assert start bit for 8 cycles
+    label("bitloop")              # Shift out 8 data bits, 8 execution cycles per bit
+    out(pins, 1)              [6] # output the data in the OSR 1 bit at a time
+    jmp(x_dec, "bitloop")         # loop back to "bitloop" until the x counter reaches 0
+    nop()      .side(1)       [6] # send stop bit for 8 cycles total (incl 1 for pull())
+
+sm1 = StateMachine(
+    1, midi_tx, freq=8 * UART_BAUD, sideset_base=Pin(PIN_BASE), out_base=Pin(PIN_BASE)
+    )
+sm1.active(1)
+
+# This pushes each word of the MIDI event to the TxFIFO
+def pio_uart_tx(sm1, event):  # 256 signals the end of the midi event
+    for c in event:  # steps through every object in "event"
+      if c == 256:   # if the object (c) equals 256 then exit loop
+         break
+      sm1.put(c)     # send the object to the TxFIFO
+
+# This assembles the MIDI event and calls the transmit routine
+event = array.array('i', (0 for _ in range(10)))    
+while True:
+   event[0] = 144 #0x90  Turn note on
+   event[1] = 60  #0x3c  Middle C
+   event[2] = 124 #0x7c  Velocity: very loud
+   event[3] = 256 #0x100 End of MIDI event
+   pio_uart_tx(sm1, event)
+   utime.sleep(0.2)
+   event[2] = 0 #0x00    Velocity" note off
+   pio_uart_tx(sm1, event)
+   utime.sleep(0.2)
+   
+**********************************************
+# MIDI Demo 5A
+# Example using PIO to transmit two notes with midi using velocity to turn note on and off
+# 0x100 indicates the end of the midi event
+from machine import Pin
+from rp2 import PIO, StateMachine, asm_pio
+import utime
+import array
+
+UART_BAUD = 31250
+PIN_BASE = 0
+
+@asm_pio(sideset_init=PIO.OUT_HIGH, out_init=PIO.OUT_HIGH, out_shiftdir=PIO.SHIFT_RIGHT)
+def midi_tx():
+    pull()                        # Block until data available in TxFIFO
+    set(x, 7)  .side(0)       [7] # Initialise bit counter, assert start bit for 8 cycles
+    label("bitloop")              # Shift out 8 data bits, 8 execution cycles per bit
+    out(pins, 1)              [6]
+    jmp(x_dec, "bitloop")
+    nop()      .side(1)       [6] # send stop bit for 8 cycles total (incl 1 for pull())
+
+sm1 = StateMachine(
+    1, midi_tx, freq=8 * UART_BAUD, sideset_base=Pin(PIN_BASE), out_base=Pin(PIN_BASE)
+    )
+sm1.active(1)
+
+# This pushes each word of the MIDI event to the TxFIFO
+def pio_uart_tx(sm1, event):  # 256 signals the end of the midi event
+    for c in event:  # steps through every object in "event"
+      if c == 256:   # if the object (c) equals 256 then exit loop
+         break
+      sm1.put(c)     # send the object to the TxFIFO
+
+# This assembles the MIDI event and calls the transmit routine
+event = array.array('i', (0 for _ in range(10)))    
+while True:
+   event[0] = 144 #0x90  Turn note on
+   event[1] = 60  #0x3c  Middle C
+   event[2] = 124 #0x7c  Velocity: very loud
+   event[3] = 144 #0x90  Turn note on
+   event[4] = 64  #0x40  E above middle C
+   event[5] = 124 #0x7c  Velocity: very loud
+   event[6] = 256 #0x100 End of MIDI event
+   pio_uart_tx(sm1, event)
+   utime.sleep(0.2)
+   event[2] = 0 #0x00    Velocity" note off
+   event[5] = 0 #0x00    Velocity" note off
+   pio_uart_tx(sm1, event)
+   utime.sleep(0.2)
+**********************************************
+
+# MIDI Demo 6A
+# Example using PIO to transmit three notes with midi using velocity to turn note on and off
+# 0x100 indicates the end of the midi event
+from machine import Pin
+from rp2 import PIO, StateMachine, asm_pio
+import utime
+import array
+
+UART_BAUD = 31250
+PIN_BASE = 0
+
+@asm_pio(sideset_init=PIO.OUT_HIGH, out_init=PIO.OUT_HIGH, out_shiftdir=PIO.SHIFT_RIGHT)
+def midi_tx():
+    pull()                        # Block until data available in TxFIFO
+    set(x, 7)  .side(0)       [7] # Initialise bit counter, assert start bit for 8 cycles
+    label("bitloop")              # Shift out 8 data bits, 8 execution cycles per bit
+    out(pins, 1)              [6]
+    jmp(x_dec, "bitloop")
+    nop()      .side(1)       [6] # send stop bit for 8 cycles total (incl 1 for pull())
+
+sm1 = StateMachine(
+    1, midi_tx, freq=8 * UART_BAUD, sideset_base=Pin(PIN_BASE), out_base=Pin(PIN_BASE)
+    )
+sm1.active(1)
+
+# This pushes each word of the MIDI event to the TxFIFO
+def pio_uart_tx(sm1, event):  # 256 signals the end of the midi event
+    for c in event:  # steps through every object in "event"
+      if c == 256:   # if the object (c) equals 256 then exit loop
+         break
+      sm1.put(c)     # send the object to the TxFIFO
+
+# This assembles the MIDI event and calls the transmit routine
+event = array.array('i', (0 for _ in range(10)))    
+while True:
+   event[0] = 144 #0x90  Turn note on
+   event[1] = 60  #0x3c  Middle C
+   event[2] = 124 #0x7c  Velocity: very loud
+   event[3] = 144 #0x90  Turn note on
+   event[4] = 64  #0x40  E above middle C
+   event[5] = 124 #0x7c  Velocity: very loud
+   event[6] = 144 #0x90  Turn note on
+   event[7] = 67  #0x43  G above middle C
+   event[8] = 124 #0x7c  Velocity: very loud  
+   event[9] = 256 #0x100 End of MIDI event
+   pio_uart_tx(sm1, event)
+   utime.sleep(0.2)
+   event[2] = 0 #0x00    Velocity" note off
+   event[5] = 0 #0x00    Velocity" note off
+   event[8] = 0 #0x00    Velocity" note off
+   pio_uart_tx(sm1, event)
+   utime.sleep(0.2)
+   
+***************************************************
+# MIDI Demo 4A
+# Example using PIO to transmit climbing notes with midi using velocity to turn notes on and off
+# 0x100 indicates the end of the midi event
+from machine import Pin
+from rp2 import PIO, StateMachine, asm_pio
+import utime
+import array
+
+UART_BAUD = 31250
+PIN_BASE = 0
+
+@asm_pio(sideset_init=PIO.OUT_HIGH, out_init=PIO.OUT_HIGH, out_shiftdir=PIO.SHIFT_RIGHT)
+def midi_tx():
+    pull()                        # Block until data available in TxFIFO
+    set(x, 7)  .side(0)       [7] # Initialise bit counter, assert start bit for 8 cycles
+    label("bitloop")              # Shift out 8 data bits, 8 execution cycles per bit
+    out(pins, 1)              [6]
+    jmp(x_dec, "bitloop")
+    nop()      .side(1)       [6] # send stop bit for 8 cycles total (incl 1 for pull())
+
+sm1 = StateMachine(
+    1, midi_tx, freq=8 * UART_BAUD, sideset_base=Pin(PIN_BASE), out_base=Pin(PIN_BASE)
+    )
+sm1.active(1)
+
+# This pushes each word of the MIDI event to the TxFIFO
+def pio_uart_tx(sm1, event):  # 256 signals the end of the midi event
+    for c in event:  # steps through every object in "event"
+      if c == 256:   # if the object (c) equals 256 then exit loop
+         break
+      sm1.put(c)     # send the object to the TxFIFO
+
+# This assembles the MIDI event and calls the transmit routine
+event = array.array('i', (0 for _ in range(10)))
+event[0] = 144 #0x90  Turn note on
+event[1] = 00  #0x3c  Middle C
+event[2] = 124 #0x7c  Velocity: very loud
+event[3] = 256 #0x100 End of MIDI event
+while True:
+   pio_uart_tx(sm1, event)
+   utime.sleep(0.2)
+   if event[2] == 124: 
+       event[2] = 0 # Velocity: note off
+   else:
+       event[2] = 124              # Velocity: very loud
+       if event[1] <= 88: 
+           event[1] = event[1] + 1 # next higher note
+       else:                       # unless top note hit
+           event[1] = 0            # then start at the bottom again
+
+***********************************************************
+# Example using PIO to measure the key velocity and raise an IRQ.
+#
+
+import time
+from machine import Pin
+import rp2
+
+@rp2.asm_pio()
+def get_velocity():   # Get velocity from "piano" key, preload 127 into Y register using exec commands
+    label("start")
+    # If you are here, you are waiting for the start of the next key press
+    wait(0, pin, 0)       # wait until start of key press
+    mov(x,y)       [5]       # Move 127 (loaded in Y reg using exec) into X
+    label("keynotdown")
+    # If you are here, the keypress has just started and timing will begin to determine velocity
+    jmp(pin,"keydown")    # if pin is high, then key is fully down, jump there
+    jmp(x_dec,"keynotdown") #if the key isn't down yet, decrement x and check again
+    # If you are here, the keypress was so slow that it never completed before velocity
+    # went to zero, just wait until the key is up again and start all over again.
+    wait(1,pin,0)         # wait until key is fully up
+    jmp("start")          # Key is up, so go back to the beginning and start again
+    label("keydown")
+    # If you are here, the key is fully down with a velocity > 0
+    mov(isr,x)           # Move the velocity value into the ISR
+    push()                  # push the ISR to the RxFIFO and clear ISR
+    irq(0)                # set IRQ 0 to say there was a change in key state (Key down)
+    # irq(block, rel(0))
+    wait(1,pin,0)         # now wait until the key is up again to send a velocity of 0 (note off)
+    push()                # isr had been cleared with last push, send a 0 to the RxFIFO (note off)
+    irq(0)   [4]             # set IRQ 0 to say there was a change in key state (key up, velocity 0)
+    # irq(block, rel(0))
+    wrap()                # bsck to the top to scan for the next key press
+    
+def handler(sm):
+    # Print the velocity (contents of the RxFIFO)
+    velocity = sm0.get()
+    print(velocity)
+
+pin02 = Pin(2, Pin.IN, Pin.PULL_DOWN) # this is the key up contact (high when fully up)
+pin03 = Pin(3, Pin.IN, Pin.PULL_DOWN) # this is the key down contact (high when fully down)
+max_velocity = 127 
+# Instantiate StateMachine(0) 
+sm0 = rp2.StateMachine(0, get_velocity, freq=4000, in_base=pin02, jmp_pin=pin03)
+sm0.irq(handler)
+sm0.put(max_velocity) # Loads max_velocity into TxFIFO
+sm0.exec("pull()")    # moves max_velocity into OSR
+sm0.exec("mov(y, osr)") # moves max_velocity into Y scratch register
+
+# Start the StateMachine's running.
+sm0.active(1)
+
+*********************************************************
+# Program keypress_plus_midi.py
+# This program uses the velocity value from a velocity sensor to transmit a
+# MIDI signal of varying velocities 
+
+import time
+from machine import Pin
+from rp2 import PIO, StateMachine, asm_pio
+import array
+
+UART_BAUD = 31250  # standard MIDI baud rate 
+PIN_BASE = 0       # GPIO pin for MIDI transmit
+UP_PIN = Pin(2, Pin.IN, Pin.PULL_DOWN) # this is the key up contact (high when fully up)
+DOWN_PIN = Pin(3, Pin.IN, Pin.PULL_DOWN) # this is the key down contact (high when fully down)
+event = array.array('i', (0 for _ in range(10))) # initalizes the event array
+
+max_velocity = 127 # Velocity PIO program preset; will be inserted using exec commands
+
+event[0] = 144 #0x90  Turn note on
+event[1] = 60  #0x3c  Middle C
+event[2] = 124 #0x7c  Velocity: very loud
+event[3] = 256 #0x100 End of MIDI event
+# PIO program to get the velocity for the velocity sensor ("piano" key)
+@asm_pio()
+def get_velocity():   # Get velocity from "piano" key, preload 127 into Y register using exec commands
+    label("start")
+    # If you are here, you are waiting for the start of the next key press
+    wait(0, pin, 0)       # wait until start of key press
+    mov(x,y)       [5]       # Move 127 (loaded in Y reg using exec) into X
+    label("keynotdown")
+    # If you are here, the keypress has just started and timing will begin to determine velocity
+    jmp(pin,"keydown")    # if pin is high, then key is fully down, jump there
+    jmp(x_dec,"keynotdown") #if the key isn't down yet, decrement x and check again
+    # If you are here, the keypress was so slow that it never completed before velocity counter
+    # got to zero, just wait until the key is up again and start all over again.
+    wait(1,pin,0)         # wait until key is fully up
+    jmp("start")          # Key is up, so go back to the beginning and start again
+    label("keydown")
+    # If you are here, the key is fully down with a velocity > 0
+    mov(isr,x)           # Move the velocity value into the ISR
+    push()                  # push the ISR to the RxFIFO and clear ISR
+    irq(0)                # set IRQ 0 to say there was a change in key state (Key down)
+    wait(1,pin,0)         # now wait until the key is up again to send a velocity of 0 (note off)
+    push()                # isr had been cleared with last push, send a 0 to the RxFIFO (note off)
+    irq(0)   [4]             # set IRQ 0 to say there was a change in key state (key up, velocity 0)
+    wrap()                # bsck to the top to scan for the next key press
+# PIO program for MIDI transmit
+@asm_pio(sideset_init=PIO.OUT_HIGH, out_init=PIO.OUT_HIGH, out_shiftdir=PIO.SHIFT_RIGHT)
+def midi_tx():
+    pull()                        # Block until data available in TxFIFO
+    set(x, 7)  .side(0)       [7] # Initialise bit counter, assert start bit for 8 cycles
+    label("bitloop")              # Shift out 8 data bits, 8 execution cycles per bit
+    out(pins, 1)              [6] # output the data in the OSR 1 bit at a time
+    jmp(x_dec, "bitloop")         # loop back to "bitloop" until the x counter reaches 0
+    nop()      .side(1)       [6] # send stop bit for 8 cycles total (incl 1 for pull())
+
+# interrupt handler: grabs the velocity (contents of the RxFIFO) and calls MIDI transmit routine
+def handler(sm):
+    velocity = sm0.get()
+    pio_uart_tx(sm1, velocity)
+
+# MIDI transmit routine; 256 signals the end of the midi event
+def pio_uart_tx(sm1, velocity):  
+    event[2] = velocity  # velocity grabbed and put into MIDI event 
+    for c in event:  # steps through every object in "event"
+      if c == 256:   # if the object (c) equals 256 then exit loop
+         break
+      sm1.put(c)     # send the object to the TxFIFO
+
+# Instantiate StateMachine(0) for keypress 
+sm0 = StateMachine(0, get_velocity, freq=4000, in_base=UP_PIN, jmp_pin=DOWN_PIN)
+sm0.irq(handler)        # Specifies the interupt handler for keypress and keyrelease
+sm0.put(max_velocity)   # Loads max_velocity into TxFIFO
+sm0.exec("pull()")      # moves max_velocity into OSR
+sm0.exec("mov(y, osr)") # moves max_velocity into Y scratch register
+sm0.active(1)           # start keypress StateMachine
+
+# Instantiate StateMachine(0) for MIDI transmit
+sm1 = StateMachine(
+    1, midi_tx, freq=8 * UART_BAUD, sideset_base=Pin(PIN_BASE), out_base=Pin(PIN_BASE)
+    )   # 8 clock cycles per bit, sideset controls start/stop bits, out transmits data
+sm1.active(1)   # start MIDI transmit StateMachine
