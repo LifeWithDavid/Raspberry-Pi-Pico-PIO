@@ -1,0 +1,356 @@
+*******************************************************
+Life With David, Raspberry Pi Pico Episode 20
+RP2040 PIO interrupts using MicroPython
+Demo files 20A through 20D
+*******************************************************
+# PIO Episode 20, Demo 20A
+# Demonstrating ID and clearing of IRQ 0 through 4 on one state machine
+# Note that IRQ is cleared when handler is started, not completed
+# 
+from machine import Pin
+import rp2
+import time
+
+pio_0 = rp2.PIO(0)
+
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW) # assemble the PIO program
+def blink_1hz():
+    # Turn on the LED and delay, taking 1000 cycles.
+    label("start")
+    set(pins, 1)
+    set(x, 31)                  [5]
+    label("delay_high")
+    nop()                       [29]
+    jmp(x_dec, "delay_high")
+    # Turn off the LED and delay, taking 1000 cycles.
+    set(pins, 0)
+    set(x, 31)                  [6]
+    label("delay_low")
+    nop()                       [29]
+    jmp(x_dec, "delay_low")
+# set interrupt and stall
+    label("irq_stall")
+    irq(block,0 )
+    jmp('start')                
+
+def my_handler(sm):  #Interrupt handler
+    x=(rp2.PIO(0).irq().flags()) # Get value of INTS Register
+    print(time.ticks_ms(), 'rp2.PIO(0).irq():',x,'= {:#014b}'.format(x))
+
+rp2.PIO(0).irq(handler = my_handler) #Assign the handler to the PIO block
+    
+# Create StateMachine(0) with the blink_1hz program, outputting on Pin(0).
+sm_0 = rp2.StateMachine(0, blink_1hz, freq=2000, set_base=Pin(0)) #, jmp_pin=BLINK_OFF_PIN_0)
+sm_0.active(1)
+
+# Just chill while PIO keeps interrupting
+while True:
+    time.sleep(2)
+
+********************************************************************************
+# PIO Episode 20, Demo 20A1
+# Demonstrating ID and clearing of IRQ 0 through 4 on one state machine
+# Note that IRQ is cleared when handler is started, not completed
+# 
+from machine import Pin
+import rp2
+import time
+import uctypes
+
+pio_0 = rp2.PIO(0)
+PIO0_IRQ_LAYOUT = {
+    "FLAGS"  :  0 << uctypes.BF_POS | 8 << uctypes.BF_LEN | uctypes.BFUINT32,
+    }
+PIO0_INTR_LAYOUT = {
+    "FLAGS"  :  0 << uctypes.BF_POS | 16 << uctypes.BF_LEN | uctypes.BFUINT32,
+    }
+PIO0_INTS_LAYOUT = {
+    "FLAGS"  :  0 << uctypes.BF_POS | 16 << uctypes.BF_LEN | uctypes.BFUINT32,
+    }
+pio0irq_cntl = uctypes.struct(0x50200030, PIO0_IRQ_LAYOUT)
+pio0intr_cntl = uctypes.struct(0x50200128, PIO0_INTR_LAYOUT)
+pio0ints_cntl = uctypes.struct(0x50200134, PIO0_INTS_LAYOUT)
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW) # assemble the PIO program
+def blink_1hz(): 
+    # Turn on the LED and delay, taking 1000 cycles.
+    label("start")
+    set(pins, 1)
+    set(x, 31)                  [5]
+    label("delay_high")
+    nop()                       [29]
+    jmp(x_dec, "delay_high")
+    # Turn off the LED and delay, taking 1000 cycles.
+    set(pins, 0)
+    set(x, 31)                  [6]
+    label("delay_low")
+    nop()                       [29]
+    jmp(x_dec, "delay_low")
+# set interrupt and stall
+    label("irq_stall")
+    irq(block,0 )
+    jmp('start')                
+
+def my_handler(sm):
+    time.sleep(.2)  #demonstrates that IRQ is cleared when handler is started
+    y=pio0irq_cntl.FLAGS #This is the value of the irq register
+    z=pio0intr_cntl.FLAGS #This is the value of the intr register
+    w=pio0ints_cntl.FLAGS #This is the value of the ints register
+    x=(rp2.PIO(0).irq().flags()) #This is the value of the intr register before entering the handler
+    print(time.ticks_ms(), 'rp2.PIO(0).irq():{:#014b}'.format(x),
+          'irq:{:#010b}'.format(y),'intr:{:#014b}'.format(z),'ints:{:#014b}'.format(w))
+
+
+rp2.PIO(0).irq(handler = my_handler)
+    
+# Create StateMachine(0) with the blink_1hz program, outputting on Pin(0).
+sm_0 = rp2.StateMachine(0, blink_1hz, freq=2000, set_base=Pin(0)) #, jmp_pin=BLINK_OFF_PIN_0)
+#rp2.PIO(0).irq().trigger(3840)
+sm_0.active(1)
+
+
+while True:
+    time.sleep(2)
+    y=pio0irq_cntl.FLAGS
+    z=pio0intr_cntl.FLAGS
+    w=pio0ints_cntl.FLAGS
+    x=(rp2.PIO(0).irq().flags())
+    print('main - rp2.PIO(0).irq():{:#014b}'.format(x),
+          'irq:{:#010b}'.format(y),'intr:{:#014b}'.format(z),'ints:{:#014b}'.format(w))
+    
+
+***********************************************************************************************
+# Ep 20 - Demo 20B
+# Demonstrate identifying and clearing IRQ 4-7 status by polling
+#  
+
+from machine import Pin
+import rp2
+import time
+import uctypes
+
+pio_0 = rp2.PIO(0)
+
+# Set up the structure layout for the bit field
+PIO0_IRQ_LAYOUT = {
+    "FLAGS"  :  0 << uctypes.BF_POS | 8 << uctypes.BF_LEN | uctypes.BFUINT32,
+    }
+pio0irq_cntl = uctypes.struct(0x50200030, PIO0_IRQ_LAYOUT)
+pio0irq_cntl.FLAGS = 0xff #clear IRQ register
+
+# Assemble the PIO program
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
+def blink_1hz():
+    # Turn on the LED and delay, taking 1000 cycles.
+    label("start")
+    set(pins, 1)
+    set(x, 31)                  [5]
+    label("delay_high")
+    nop()                       [29]
+    jmp(x_dec, "delay_high")
+    # Turn off the LED and delay, taking 1000 cycles.
+    set(pins, 0)
+    set(x, 31)                  [6]
+    label("delay_low")
+    nop()                       [29]
+    jmp(x_dec, "delay_low")
+    label("irq_stall")
+    irq(block,4)
+    jmp('start')                
+
+# Create StateMachine(0) with the blink_1hz program, outputting on Pin(0).
+sm_0 = rp2.StateMachine(0, blink_1hz, freq=2000, set_base=Pin(0))
+sm_0.active(1)
+
+while True:
+    x = pio0irq_cntl.FLAGS #grab interrupt flag status
+    if x!=0:               #if an interrupt is tripped, print status and clear all interrupts
+        print(time.ticks_ms(), 'rp2.PIO(0).irq():',x,'= {:#010b}'.format(x))
+        pio0irq_cntl.FLAGS = 0xff #clear IRQ register
+**********************************************************************************************
+# Ep 20 - Demo 20C 4 state machines
+# ID and clear using handler 
+from machine import Pin
+import rp2
+import time
+import uctypes
+global x
+pio_0 = rp2.PIO(0) #set up PIO block 0
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
+def blink_1hz():
+    # Turn on the LED and delay, taking 1000 cycles.
+    label("start")
+    set(pins, 1)
+    set(x, 31)                  [5]
+    label("delay_high")
+    nop()                       [29]
+    nop()                       [29]
+    jmp(x_dec, "delay_high")
+    # Turn off the LED and delay, taking 1000 cycles.
+    set(pins, 0)
+    set(x, 31)                  [6]
+    label("delay_low")
+    nop()                       [29]
+    nop()                       [29]
+    jmp(x_dec, "delay_low")
+    # set interrupt and stall
+    label("irq_stall")
+    irq(block,rel(0))
+    jmp('start')                
+
+def my_handler(sm):
+    x=(rp2.PIO(0).irq().flags())
+    print(time.ticks_ms(), 'rp2.PIO(0).irq(): {:5d}'.format(x),'= {:#014b}'.format(x))
+
+# Create StateMachine(0-3) with the blink_1hz program, outputting on Pin(0-3).
+sm_0 = rp2.StateMachine(0, blink_1hz, freq=2000, set_base=Pin(0))
+sm_1 = rp2.StateMachine(1, blink_1hz, freq=2000, set_base=Pin(1))
+sm_2 = rp2.StateMachine(2, blink_1hz, freq=2000, set_base=Pin(2))
+sm_3 = rp2.StateMachine(3, blink_1hz, freq=2000, set_base=Pin(3))
+
+rp2.PIO(0).irq(handler = my_handler)
+
+sm_0.active(1)
+time.sleep(.25)
+sm_1.active(1)
+time.sleep(.25)
+sm_2.active(1)
+time.sleep(.25)
+sm_3.active(1)
+
+while True:
+    time.sleep(2 )
+
+*******************************************************************************************
+# Ep 20 - Demo 20C1 4 state machines
+# ID and clear using 4 separate handlers 
+from machine import Pin
+import rp2
+import time
+import uctypes
+global x
+pio_0 = rp2.PIO(0) #set up PIO block 0
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
+def blink_1hz():
+    # Turn on the LED and delay, taking 1000 cycles.
+    label("start")
+    set(pins, 1)
+    set(x, 31)                  [5]
+    label("delay_high")
+    nop()                       [29]
+    nop()                       [29]
+    jmp(x_dec, "delay_high")
+    # Turn off the LED and delay, taking 1000 cycles.
+    set(pins, 0)
+    set(x, 31)                  [6]
+    label("delay_low")
+    nop()                       [29]
+    nop()                       [29]
+    jmp(x_dec, "delay_low")
+    # set interrupt and stall
+    label("irq_stall")
+    irq(block,rel(3))
+    jmp('start')                
+
+def my_handler_0(sm):
+    print(time.ticks_ms(), 'my_handler_0')
+def my_handler_1(sm):
+    print(time.ticks_ms(), 'my_handler_1')
+def my_handler_2(sm):
+    print(time.ticks_ms(), 'my_handler_2')
+def my_handler_3(sm):
+    print(time.ticks_ms(), 'my_handler_3')
+    
+# Create StateMachine(0-3) with the blink_1hz program, outputting on Pin(0-3).
+sm_0 = rp2.StateMachine(0, blink_1hz, freq=2000, set_base=Pin(0))
+sm_1 = rp2.StateMachine(1, blink_1hz, freq=2000, set_base=Pin(1))
+sm_2 = rp2.StateMachine(2, blink_1hz, freq=2000, set_base=Pin(2))
+sm_3 = rp2.StateMachine(3, blink_1hz, freq=2000, set_base=Pin(3))
+
+
+sm_0.irq(my_handler_0)
+sm_1.irq(my_handler_1)
+sm_2.irq(my_handler_2)
+sm_3.irq(my_handler_3)
+
+sm_0.active(1)
+time.sleep(.25)
+sm_1.active(1)
+time.sleep(.25)
+sm_2.active(1)
+time.sleep(.25)
+sm_3.active(1)
+
+while True:
+    time.sleep(2 )
+
+    
+
+*****************************************************************************
+# Ep 20 - Demo 20D 4 simultaneous state machines
+# Stall, clear and synchronize using polling
+# 
+from machine import Pin
+import rp2
+import time
+import uctypes
+BLINK_OFF_PIN_0=Pin(16, Pin.IN, Pin.PULL_DOWN)
+BLINK_OFF_PIN_1=Pin(17, Pin.IN, Pin.PULL_DOWN)
+BLINK_OFF_PIN_2=Pin(18, Pin.IN, Pin.PULL_DOWN)
+BLINK_OFF_PIN_3=Pin(19, Pin.IN, Pin.PULL_DOWN)
+RLSE_INT_PIN=Pin(20, Pin.IN, Pin.PULL_DOWN)
+pio_0 = rp2.PIO(0)
+
+PIO0_IRQ_LAYOUT = {
+    "FLAGS"  :  0 << uctypes.BF_POS | 8 << uctypes.BF_LEN | uctypes.BFUINT32,
+    }
+pio0irq_cntl = uctypes.struct(0x50200030, PIO0_IRQ_LAYOUT)
+pio0irq_cntl.FLAGS = 0xff #clear IRQ register
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
+def blink_1hz():
+    # Turn on the LED and delay, taking 1000 cycles.
+    label("start")
+    set(pins, 1)
+    set(x, 31)                  [5]
+    label("delay_high")
+    jmp(pin, "irq_stall") 
+    nop()                       [28]
+    jmp(x_dec, "delay_high")
+    # Turn off the LED and delay, taking 1000 cycles.
+    set(pins, 0)
+    set(x, 31)                  [6]
+    label("delay_low")
+    jmp(pin, "irq_stall")
+    nop()                       [28]
+    jmp(x_dec, "delay_low")
+    jmp("start")
+    # set interrupt and stall
+    label("irq_stall")
+    irq(block,0)
+    wait(0,irq,0)
+    jmp('start')                
+
+# Create StateMachine(0) with the blink_1hz program, outputting on Pin(25).
+sm_0 = rp2.StateMachine(0, blink_1hz, freq=2000, set_base=Pin(0), jmp_pin=BLINK_OFF_PIN_0)
+sm_1 = rp2.StateMachine(1, blink_1hz, freq=2000, set_base=Pin(1), jmp_pin=BLINK_OFF_PIN_1)
+sm_2 = rp2.StateMachine(2, blink_1hz, freq=2000, set_base=Pin(2), jmp_pin=BLINK_OFF_PIN_2)
+sm_3 = rp2.StateMachine(3, blink_1hz, freq=2000, set_base=Pin(3), jmp_pin=BLINK_OFF_PIN_3)
+
+sm_0.active(1)
+time.sleep(.25)
+sm_1.active(1)
+time.sleep(.25)
+sm_2.active(1)
+time.sleep(.25)
+sm_3.active(1)
+
+while True:
+    if RLSE_INT_PIN.value() == 1:
+        pio0irq_cntl.FLAGS = 0xff #clear IRQ register
+    time.sleep(.1 )
+
+
+
+
+    
+
+
