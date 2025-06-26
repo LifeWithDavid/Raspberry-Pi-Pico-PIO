@@ -1,4 +1,4 @@
-These are the files for Life with David PIO Chronicles, Episode 22, programming a scanned keybpard in C.  
+These are the files for Life with David PIO Chronicles, Episode 22, programming a scanned keybpard in C.  (https://youtu.be/J56ty0Tvi_8)
 -Demo 1 converts the MicroPython program from PIO Chronicles Ep. 21 into C
 -Demo 2 adds interrupt handling of a pressed key
 -Demo 3 increases the speed of the keyboard by removing delays in the PIO program originally used for debugging
